@@ -1551,29 +1551,14 @@ RunService.Heartbeat:Connect(function()
     if #BringGroup == 0 then BringPoint = nil end
 end)
 
-do
-    local charParts = {}
-
-    local function cacheParts(char)
-        charParts = {}
-        for _, d in ipairs(char:GetDescendants()) do
-            if d:IsA("BasePart") then table.insert(charParts, d) end
-        end
-        char.DescendantAdded:Connect(function(d)
-            if d:IsA("BasePart") then table.insert(charParts, d) end
-        end)
-    end
-
-    if Player.Character then cacheParts(Player.Character) end
-    Player.CharacterAdded:Connect(cacheParts)
-
-    RunService.Stepped:Connect(function()
-        if not ((farming or traveling) and target) then return end
-        for _, part in ipairs(charParts) do
+RunService.Stepped:Connect(function()
+    if not ((farming or traveling) and target and Player.Character) then return end
+    for _, part in ipairs(Player.Character:GetDescendants()) do
+        if part:IsA("BasePart") then
             part.CanCollide = false
         end
-    end)
-end
+    end
+end)
 
 task.spawn(function()
     while true do
@@ -2183,48 +2168,6 @@ RaidTab:AddDropdown("RaidGuestSlot", {
 }):OnChanged(function(value)
     RaidCfg.GuestSlot = tonumber(value) or 1
 end)
-
-do
-    local EFFECTS = { ParticleEmitter = true, Trail = true, Beam = true, Smoke = true, Fire = true, Sparkles = true }
-    local POST = { BloomEffect = true, SunRaysEffect = true, DepthOfFieldEffect = true }
-
-    local function optimize(d)
-        if EFFECTS[d.ClassName] then
-            d.Enabled = false
-        elseif d:IsA("BasePart") and not d:IsA("Terrain") then
-            d.CastShadow = false
-            d.Reflectance = 0
-            d.Material = Enum.Material.SmoothPlastic
-        end
-    end
-
-    pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
-    pcall(function() settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04 end)
-    pcall(function() Lighting.GlobalShadows = false end)
-
-    pcall(function()
-        local terrain = workspace.Terrain
-        terrain.WaterWaveSize = 0
-        terrain.WaterWaveSpeed = 0
-        terrain.WaterReflectance = 0
-    end)
-
-    local function lightingEffect(d)
-        if POST[d.ClassName] then d.Enabled = false end
-    end
-    for _, d in ipairs(Lighting:GetChildren()) do pcall(lightingEffect, d) end
-    Lighting.ChildAdded:Connect(function(d) pcall(lightingEffect, d) end)
-
-    workspace.DescendantAdded:Connect(function(d) pcall(optimize, d) end)
-    task.spawn(function()
-        local count = 0
-        for _, d in ipairs(workspace:GetDescendants()) do
-            pcall(optimize, d)
-            count += 1
-            if count % 300 == 0 then task.wait() end
-        end
-    end)
-end
 
 Player.Idled:Connect(function()
     VirtualUser:CaptureController()
