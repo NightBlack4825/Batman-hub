@@ -25,7 +25,6 @@ local Main = Window:AddTab({ Title = "Main", Icon = "home" })
 local Stack = Window:AddTab({ Title = "Stack Farming", Icon = "layers" })
 local StatusTab = Window:AddTab({ Title = "Status", Icon = "activity" })
 local RaidTab = Window:AddTab({ Title = "Raid", Icon = "users" })
-local SeaTab = Window:AddTab({ Title = "Sea Events", Icon = "anchor" })
 local LocalTab = Window:AddTab({ Title = "Local Player", Icon = "user" })
 local Travel = Window:AddTab({ Title = "Travel", Icon = "plane" })
 local Misc = Window:AddTab({ Title = "Misc", Icon = "wrench" })
@@ -202,6 +201,14 @@ local SeaCfg = {
     lastBuy = 0,
     lastSkill = 0,
     lastSit = 0,
+    -- referencia: barco anda pelo VehicleSeat numa altura fixa, e flutua alto durante o combate
+    BoatPosY = 31,
+    BoatSpeed = 230,
+    ProtectBoat = true,
+    ProtectY = 450,
+    boatGoal = nil,
+    boatGoalT = 0,
+    wantSit = false,
 }
 
 -- CORRIGIDO: campo "text" guarda a ultima resposta do CakePrinceSpawner (usado na fase Dough King)
@@ -1892,7 +1899,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 RunService.Stepped:Connect(function()
-    if not ((farming or traveling) and target and Player.Character) then return end
+    if not ((farming or traveling) and target and Player.Character) or SeaCfg.wantSit then return end
     for _, part in ipairs(Player.Character:GetDescendants()) do
         if part:IsA("BasePart") then
             part.CanCollide = false
@@ -1938,7 +1945,13 @@ local function ownedBoat(ignoreFar)
             local value = owner and owner.Value
             if value == Player or tostring(value) == Player.Name then
                 local seat = boat:FindFirstChild("VehicleSeat") or boat:FindFirstChildWhichIsA("VehicleSeat", true)
-                if seat then
+                local hp = boat:FindFirstChild("Humanoid")
+                local dead = (hp ~= nil and hp:IsA("ValueBase") and hp.Value == 0)
+                    or (hp ~= nil and hp:IsA("Humanoid") and hp.Health <= 0)
+                    or boat:GetAttribute("Dead") == true
+                    or boat:GetAttribute("Sunk") == true
+                    or (seat ~= nil and seat.Position.Y < -15)
+                if seat and not dead then
                     local tooFar = ignoreFar and playerRoot
                         and (seat.Position - playerRoot.Position).Magnitude > SeaCfg.MaxBoatDist
                     if not tooFar then return boat, seat end
@@ -2182,7 +2195,7 @@ RunService.Heartbeat:Connect(function()
     local dodging = SeaCfg.dodgeBeast()
     SeaCfg.beastDodging = dodging
     if dodging then
-        local p = part.Position - part.CFrame.LookVector * 2
+        local p = part.Position - part.CFrame.LookVector * 20
         hrp.CFrame = CFrame.new(p.X, math.max(p.Y + 400, minY), p.Z) * hrp.CFrame.Rotation
         target = hrp.CFrame
     end
@@ -2273,6 +2286,8 @@ local function runSeaEvents()
 
     clearGroup()
     SeaCfg.beastPart = nil
+    SeaCfg.boatGoal = nil
+    SeaCfg.wantSit = false
 
     if SeaCfg.dodge then
         hover(true)
@@ -2318,6 +2333,37 @@ local function runSeaEvents()
     SeaCfg.terrorNear = hasTerror
 
     if mob then
+        -- Protect Boat: o barco flutua alto enquanto voce luta, para nao tomar dano
+        if boat and seat and SeaCfg.ProtectBoat then
+            local pivot = boat:GetPivot()
+            local py = SeaCfg.ProtectY
+            if pivot.Position.Y < py - 10 then
+                pcall(function()
+                    boat:PivotTo(CFrame.new(pivot.Position.X, py, pivot.Position.Z) * pivot.Rotation)
+                end)
+            end
+            local holdPos = Vector3.new(pivot.Position.X, py, pivot.Position.Z)
+            local bp = seat:FindFirstChild("BoatProtectBP")
+            if not bp then
+                bp = Instance.new("BodyPosition")
+                bp.Name = "BoatProtectBP"
+                bp.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                bp.P = 100000
+                bp.D = 1000
+                bp.Parent = seat
+            end
+            bp.Position = holdPos
+            local bv = seat:FindFirstChild("BoatProtectBV")
+            if not bv then
+                bv = Instance.new("BodyVelocity")
+                bv.Name = "BoatProtectBV"
+                bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                bv.P = 100000
+                bv.Parent = seat
+            end
+            bv.Velocity = Vector3.zero
+        end
+
         if humanoid.SeatPart then
             Stats.State = "Leaving boat"
             attackFocus = nil
@@ -2335,20 +2381,48 @@ local function runSeaEvents()
             attackFocus = nil
             SeaCfg.beastPart = mob.part
             local height = SeaCfg.beastDodging and 400 or 250
-            local behind = pos - mob.part.CFrame.LookVector * 2
+            local behind = pos - mob.part.CFrame.LookVector * (SeaCfg.beastDodging and 20 or 2)
             -- o Sea Beast mergulha: nunca deixa o alvo ficar abaixo da altura minima sobre a agua
             local goalY = math.max(pos.Y + height, levelCF.Y + SeaCfg.BeastMinAbove)
             target = CFrame.new(behind.X, goalY, behind.Z) * hrp.CFrame.Rotation
             if mob.dist <= 600 then releaseSkills(mob.part) end
+        elseif mob.terror then
+            -- alturas da referencia: na superficie 250, atacando (slam/spin) 150 e afastado 30, normal 40
+            local offset
+            if pos.Y > -3 then
+                offset = CFrame.new(0, 250, 0)
+            elseif terrorDodge() then
+                offset = CFrame.new(0, 150, 30)
+            else
+                offset = CFrame.new(0, 40, 0)
+            end
+            target = CFrame.new((mob.part.CFrame * offset).Position) * hrp.CFrame.Rotation
+            attackFocus = mob.model
         else
-            local height = mob.terror and 40 or K.HOVER_HEIGHT
-            target = CFrame.new(pos + Vector3.new(0, height, 0)) * hrp.CFrame.Rotation
+            target = CFrame.new(pos + Vector3.new(0, K.HOVER_HEIGHT, 0)) * hrp.CFrame.Rotation
             attackFocus = mob.model
         end
         return
     end
 
     attackFocus = nil
+
+    -- sem alvos: remove a protecao do barco (RemoveProtect)
+    if seat then
+        local bp = seat:FindFirstChild("BoatProtectBP")
+        local bv = seat:FindFirstChild("BoatProtectBV")
+        if bp or bv then
+            -- desce o barco ate a agua antes de soltar, para ele nao cair com inercia e sair andando
+            local pivot = boat:GetPivot()
+            pcall(function()
+                boat:PivotTo(CFrame.new(pivot.Position.X, SeaCfg.BoatPosY, pivot.Position.Z) * pivot.Rotation)
+            end)
+            seat.AssemblyLinearVelocity = Vector3.zero
+            seat.AssemblyAngularVelocity = Vector3.zero
+            if bp then bp:Destroy() end
+            if bv then bv:Destroy() end
+        end
+    end
 
     if boatLost then
         if nearerToDealer(SeaCfg.lastBoatPos) then
@@ -2369,6 +2443,7 @@ local function runSeaEvents()
             target = seatCF
             return
         end
+        SeaCfg.wantSit = true
         target = nil
         hover(false)
         sitOnBoat(seat)
@@ -2386,20 +2461,45 @@ local function runSeaEvents()
             target = CFrame.new(hrp.Position.X, levelCF.Y + 2000, hrp.Position.Z) * hrp.CFrame.Rotation
         else
             Stats.State = "Waiting Sea Events"
-            target = CFrame.new(levelCF.Position) * hrp.CFrame.Rotation
+            target = nil
+            SeaCfg.boatGoal = levelCF.Position
+            SeaCfg.boatGoalT = os.clock()
         end
     else
         Stats.State = "Sailing to Danger Level " .. SeaCfg.Level
-        target = CFrame.new(levelCF.Position + Vector3.new(0, 40, 0)) * hrp.CFrame.Rotation
+        target = nil
+        SeaCfg.boatGoal = levelCF.Position
+        SeaCfg.boatGoalT = os.clock()
     end
 end
 
-RunService.Stepped:Connect(function()
+RunService.Stepped:Connect(function(_, dt)
     if not SeaCfg.Auto then return end
-    local boat = ownedBoat()
+    local boat, seat = ownedBoat()
     if not boat then return end
+    -- o assento precisa colidir, senao o personagem nao consegue sentar
     for _, part in ipairs(boat:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = false end
+        if part:IsA("BasePart") then part.CanCollide = (part == seat) end
+    end
+
+    local goal = SeaCfg.boatGoal
+    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+    local seated = seat ~= nil and humanoid ~= nil and humanoid.SeatPart == seat
+    -- destino vence em 0.5s: nunca anda com destino velho
+    if goal and os.clock() - SeaCfg.boatGoalT > 0.5 then goal = nil end
+    if goal and seat and seated then
+        local from = Vector3.new(seat.Position.X, SeaCfg.BoatPosY, seat.Position.Z)
+        local delta = Vector3.new(goal.X, SeaCfg.BoatPosY, goal.Z) - from
+        local dist = delta.Magnitude
+        if dist > 25 then
+            local step = math.min(SeaCfg.BoatSpeed * dt, dist)
+            seat.CFrame = CFrame.new(from + delta.Unit * step) * seat.CFrame.Rotation
+        end
+        seat.AssemblyLinearVelocity = Vector3.zero
+    elseif seat and not seated and not seat:FindFirstChild("BoatProtectBP") then
+        -- ninguem no assento e sem protecao: impede o barco de sair andando sozinho
+        seat.AssemblyLinearVelocity = Vector3.zero
+        seat.AssemblyAngularVelocity = Vector3.zero
     end
 end)
 
@@ -3150,41 +3250,6 @@ MultiRaidSection:AddDropdown("RaidGuestSlot", {
 }):OnChanged(function(value)
     RaidCfg.GuestSlot = tonumber(value) or 1
 end)
-
-SeaTab:AddDropdown("SelectBoat", {
-    Title = "Select Your Boat",
-    Values = { "Guardian", "Lantern" },
-    Default = 1,
-}):OnChanged(function(value) SeaCfg.Boat = value end)
-
-SeaTab:AddDropdown("SeaFarm", {
-    Title = "Farm",
-    Values = { "Terror Shark", "Shark", "Piranha", "Sea Beast" },
-    Multi = true,
-    Default = {},
-}):OnChanged(function(value) SeaCfg.Farm = value end)
-
-SeaTab:AddDropdown("SeaDangerLevel", {
-    Title = "Select Sea Danger Level",
-    Values = { "1", "2", "3", "4", "5", "6" },
-    Default = 1,
-}):OnChanged(function(value) SeaCfg.Level = tonumber(value) or 1 end)
-
-SeaTab:AddToggle("AutoSeaEvents", { Title = "Auto Sea Events", Default = false })
-    :OnChanged(function(value)
-        SeaCfg.Auto = value
-        SeaCfg.hadBoat = false
-        SeaCfg.needNewBoat = false
-        SeaCfg.atSea = false
-        SeaCfg.dodge = nil
-        if not value then
-            target = nil
-            attackFocus = nil
-            Aim.pos, Aim.part = nil, nil
-            SeaCfg.SkillHold = false
-        end
-        refresh()
-    end)
 
 Player.Idled:Connect(function()
     VirtualUser:CaptureController()
