@@ -101,6 +101,8 @@ local BUG_TIME = 30
 local ELITE_BOSSES = { "Diablo", "Deandre", "Urban" }
 local DOUGH_BOSS = { "Dough King" }
 local RIP_BOSS = { "rip_indra True Form", "rip_indra" }
+local SOUL_BOSS = { "Soul Reaper" }
+local SOUL_ALTAR = CFrame.new(-8932.09863, 143.755417, 6058.58154, -0.996918082, 3.84372747e-08, -0.0784496292, 4.57218867e-08, 1, -9.1060997e-08, 0.0784496292, -9.43672234e-08, -0.996918082)
 local ELITE_CALL_COOLDOWN = 5
 
 local CASTLE_POS = Vector3.new(-5496, 313, -2841)
@@ -700,6 +702,35 @@ local function handleStackBoss(boss, inWorld)
     end
 end
 
+local lastSummonUse = 0
+
+local function findEssence()
+    for _, container in ipairs({ Player.Character, Player.Backpack }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") and tool.Name:find("Essence") then return tool end
+            end
+        end
+    end
+end
+
+local function handleSummon(essence)
+    clearGroup()
+    attackFocus = nil
+    target = SOUL_ALTAR
+    local char = Player.Character
+    local hrp = root()
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if not (hrp and humanoid) then return end
+    if essence.Parent ~= char then
+        humanoid:EquipTool(essence)
+    end
+    if (hrp.Position - SOUL_ALTAR.Position).Magnitude <= 5 and os.clock() - lastSummonUse > 2 then
+        lastSummonUse = os.clock()
+        essence:Activate()
+    end
+end
+
 local function findBoss()
     local boss = findEnemy(BOSS_NAMES, true)
     if boss then return boss end
@@ -918,6 +949,15 @@ task.spawn(function()
         if Options.StoreFruits and Options.StoreFruits.Value and not Stats.PauseStore then
             pcall(storeFruits)
         end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if Options.RandomBone and Options.RandomBone.Value then
+            commF("Bones", "Buy", 1, 1)
+        end
+        task.wait(0.5)
     end
 end)
 
@@ -1850,12 +1890,27 @@ local function step()
     if not stackBoss and Options.AttackRip.Value then
         stackBoss, stackInWorld = findBossAny(RIP_BOSS)
     end
+    if not stackBoss and Options.KillSoulReaper.Value then
+        stackBoss, stackInWorld = findBossAny(SOUL_BOSS)
+    end
     if stackBoss then
         prep()
         lastMode = "stack"
-        Stats.State = table.find(DOUGH_BOSS, stackBoss.Name) and "Dough King" or "Rip Indra"
+        Stats.State = table.find(DOUGH_BOSS, stackBoss.Name) and "Dough King"
+            or table.find(SOUL_BOSS, stackBoss.Name) and "Soul Reaper" or "Rip Indra"
         handleStackBoss(stackBoss, stackInWorld)
         return
+    end
+
+    if Options.SummonSoulReaper.Value and not findEnemy(SOUL_BOSS, true) then
+        local essence = findEssence()
+        if essence then
+            hover(true)
+            lastMode = "summon"
+            Stats.State = "Summon Soul Reaper"
+            handleSummon(essence)
+            return
+        end
     end
 
     if Options.CastleRaid.Value and raidActive() then
@@ -2038,6 +2093,7 @@ Main:AddDropdown("MethodFarm", {
 
 Main:AddToggle("Farm", { Title = "Farm", Default = false })
 Main:AddToggle("GetQuest", { Title = "Get Quest", Default = false })
+Main:AddToggle("RandomBone", { Title = "Auto Random Bone", Default = false })
 Main:AddToggle("EliteHunter", { Title = "Auto Elite Hunter", Default = false })
 Main:AddToggle("CastleRaid", { Title = "Auto Castle Raid", Default = false })
 Main:AddToggle("CollectFruits", { Title = "Auto Collect Fruits", Default = false })
@@ -2045,6 +2101,8 @@ Main:AddToggle("StoreFruits", { Title = "Auto Store Fruits", Default = false })
 
 Stack:AddToggle("AttackRip", { Title = "Auto Attack Rip Indra", Default = false })
 Stack:AddToggle("AttackDough", { Title = "Auto Attack Dough King", Default = false })
+Stack:AddToggle("SummonSoulReaper", { Title = "Auto Summon Soul Reaper", Default = false })
+Stack:AddToggle("KillSoulReaper", { Title = "Auto Kill Soul Reaper", Default = false })
 
 do
     local stateLabel = StatusTab:AddParagraph({ Title = "State:", Content = "Idle" })
@@ -2216,7 +2274,8 @@ Settings:AddDropdown("BringCount", {
 
 local function refresh()
     local want = Options.Farm.Value or Options.EliteHunter.Value or Options.CastleRaid.Value or Options.CollectFruits.Value
-        or Options.AttackRip.Value or Options.AttackDough.Value or multiRaidActive() or RaidCfg.AutoBuyChip
+        or Options.AttackRip.Value or Options.AttackDough.Value or Options.SummonSoulReaper.Value
+        or Options.KillSoulReaper.Value or multiRaidActive() or RaidCfg.AutoBuyChip
     if want and not farming then
         farming = true
         task.spawn(farmLoop)
@@ -2231,6 +2290,8 @@ Options.CastleRaid:OnChanged(refresh)
 Options.CollectFruits:OnChanged(refresh)
 Options.AttackRip:OnChanged(refresh)
 Options.AttackDough:OnChanged(refresh)
+Options.SummonSoulReaper:OnChanged(refresh)
+Options.KillSoulReaper:OnChanged(refresh)
 
 local function playerNames()
     local list = {}
