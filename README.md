@@ -6,6 +6,7 @@ local Lighting = game:GetService("Lighting")
 local Workspace = game:GetService("Workspace")
 
 local Player = Players.LocalPlayer
+local K = {}
 
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local Options = Fluent.Options
@@ -24,24 +25,25 @@ local Main = Window:AddTab({ Title = "Main", Icon = "home" })
 local Stack = Window:AddTab({ Title = "Stack Farming", Icon = "layers" })
 local StatusTab = Window:AddTab({ Title = "Status", Icon = "activity" })
 local RaidTab = Window:AddTab({ Title = "Raid", Icon = "users" })
+local SeaTab = Window:AddTab({ Title = "Sea Events", Icon = "anchor" })
 local LocalTab = Window:AddTab({ Title = "Local Player", Icon = "user" })
 local Travel = Window:AddTab({ Title = "Travel", Icon = "plane" })
 local Misc = Window:AddTab({ Title = "Misc", Icon = "wrench" })
 local Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 
-local CAKE_MOBS = { "Cookie Crafter", "Cake Guard", "Baking Staff", "Head Baker" }
-local BOSS_NAMES = { "Cake Prince", "Katakuri" }
-local MOB_AREAS = {
+K.CAKE_MOBS = { "Cookie Crafter", "Cake Guard", "Baking Staff", "Head Baker" }
+K.BOSS_NAMES = { "Cake Prince", "Katakuri" }
+K.MOB_AREAS = {
     CFrame.new(-2374, 37, -12125),
     CFrame.new(-1598, 43, -12244),
     CFrame.new(-1887, 77, -12900),
     CFrame.new(-2216, 52, -12853),
 }
-local CAKE_ENTRANCE = CFrame.new(-2124, 69, -12401)
-local CAKE_TOTAL = 500
-local SEA3_IDS = { [7449423635] = true, [100117331123089] = true }
+K.CAKE_ENTRANCE = CFrame.new(-2124, 69, -12401)
+K.CAKE_TOTAL = 500
+K.SEA3_IDS = { [7449423635] = true, [100117331123089] = true }
 
-local METHODS = {
+K.METHODS = {
     ["Katakuri"] = {
         cake = true,
         bosses = {},
@@ -75,11 +77,23 @@ local METHODS = {
     },
 }
 
-local ISLAND_NAMES = {
+K.METHODS["Cocoa"] = {
+    bosses = {},
+    noQuest = true,
+    giver = CFrame.new(219, 126, -12604),
+    area = { CFrame.new(219, 126, -12604) },
+    mobs = {
+        { name = "Chocolate Bar Battler", lvl = 2300, quest = "ChocQuest1", idx = 1 },
+        { name = "Cocoa Warrior", lvl = 2325, quest = "ChocQuest1", idx = 2 },
+    },
+}
+K.COCOA_NEEDED = 10
+
+K.ISLAND_NAMES = {
     "Haunted Castle", "Tiki Outpost", "Castle On The Sea", "Mansion", "Hydra Island",
     "Port Town", "Great Tree", "Cake Land", "Chocolate Land",
 }
-local ISLANDS = {
+K.ISLANDS = {
     ["Haunted Castle"] = Vector3.new(-9517, 142.1348876953125, 5528),
     ["Tiki Outpost"] = Vector3.new(-16224, 9.090619087219238, 439),
     ["Castle On The Sea"] = Vector3.new(-4980, 314.5460205078125, -3018),
@@ -91,24 +105,24 @@ local ISLANDS = {
     ["Chocolate Land"] = Vector3.new(219, 126.62200927734375, -12604),
 }
 
-local BRING_RANGE = 300
-local HOVER_HEIGHT = 20
-local STUCK_TIME = 3
-local SKIP_TIME = 15
-local BUG_RADIUS = 60
-local BUG_TIME = 30
+K.BRING_RANGE = 300
+K.HOVER_HEIGHT = 20
+K.STUCK_TIME = 3
+K.SKIP_TIME = 15
+K.BUG_RADIUS = 60
+K.BUG_TIME = 30
 
-local ELITE_BOSSES = { "Diablo", "Deandre", "Urban" }
-local DOUGH_BOSS = { "Dough King" }
-local RIP_BOSS = { "rip_indra True Form", "rip_indra" }
-local SOUL_BOSS = { "Soul Reaper" }
-local SOUL_ALTAR = CFrame.new(-8932.09863, 143.755417, 6058.58154, -0.996918082, 3.84372747e-08, -0.0784496292, 4.57218867e-08, 1, -9.1060997e-08, 0.0784496292, -9.43672234e-08, -0.996918082)
-local ELITE_CALL_COOLDOWN = 5
+K.ELITE_BOSSES = { "Diablo", "Deandre", "Urban" }
+K.DOUGH_BOSS = { "Dough King" }
+K.RIP_BOSS = { "rip_indra True Form", "rip_indra" }
+K.SOUL_BOSS = { "Soul Reaper" }
+K.SOUL_ALTAR = CFrame.new(-8932.09863, 143.755417, 6058.58154, -0.996918082, 3.84372747e-08, -0.0784496292, 4.57218867e-08, 1, -9.1060997e-08, 0.0784496292, -9.43672234e-08, -0.996918082)
+K.ELITE_CALL_COOLDOWN = 5
 
-local CASTLE_POS = Vector3.new(-5496, 313, -2841)
-local CASTLE_RADIUS = 700
-local RAID_WAIT = 240
-local RAID_END_IDLE = 2
+K.CASTLE_POS = Vector3.new(-5496, 313, -2841)
+K.CASTLE_RADIUS = 700
+K.RAID_WAIT = 240
+K.RAID_END_IDLE = 2
 
 local farming = false
 local traveling = false
@@ -154,7 +168,46 @@ local RaidCfg = {
     SlotRadius = 8,
 }
 
-local Kat = { lastIdleQuery = 0, remaining = nil, needCheck = true, blockUntil = 0, mode = nil, lastN = nil, bossSeen = false }
+local SeaCfg = {
+    Auto = false,
+    Boat = "Guardian",
+    Farm = {},
+    Level = 1,
+    Levels = {
+        [1] = CFrame.new(-21998.375, 30.0006, -682.309),
+        [2] = CFrame.new(-26779.5215, 30.0005, -822.858),
+        [3] = CFrame.new(-31171.957, 30.0001, -2256.9377),
+        [4] = CFrame.new(-34054.6875, 30.2187, -2560.1201),
+        [5] = CFrame.new(-38887.5547, 30.0004, -2162.9902),
+        [6] = CFrame.new(-44541.7617, 30.0003, -1244.8584),
+    },
+    SkillHold = false,
+    DealerCFrame = CFrame.new(-16923.447265625, 9.391397476196289, 434.3277282714844),
+    Range = 1500,
+    MaxBoatDist = 2500,
+    needNewBoat = false,
+    hadBoat = false,
+    atSea = false,
+    lastBoatPos = nil,
+    dodge = nil,
+    terrorNear = false,
+    beastPart = nil,
+    beastDodging = false,
+    -- altura minima do personagem acima da superficie do mar enquanto ataca o Sea Beast
+    -- (o Sea Beast mergulha, entao a posicao dele + altura pode ficar debaixo da agua)
+    BeastMinAbove = 150,
+    surfaceY = 30,
+    extra = {},
+    extraT = 0,
+    lastBuy = 0,
+    lastSkill = 0,
+    lastSit = 0,
+}
+
+-- CORRIGIDO: campo "text" guarda a ultima resposta do CakePrinceSpawner (usado na fase Dough King)
+local Kat = { lastIdleQuery = 0, remaining = nil, needCheck = true, blockUntil = 0, mode = nil, lastN = nil, bossSeen = false, text = nil }
+
+local Dough = { phase = nil, cocoa = 0, cocoaKnown = false, invGod = false, invSweet = false, lastInv = -100, lastCraft = -100, probeAt = 0, lastNotify = -100 }
 
 local CommF = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CommF_")
 local Net = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net")
@@ -214,14 +267,14 @@ local function waitFor(fn, timeout)
 end
 
 local function detectSea3()
-    if SEA3_IDS[game.PlaceId] then return true end
+    if K.SEA3_IDS[game.PlaceId] then return true end
     local origin = workspace:FindFirstChild("_WorldOrigin")
     local spawns = origin and origin:FindFirstChild("EnemySpawns")
     for _, s in ipairs(spawns and spawns:GetChildren() or {}) do
-        if table.find(CAKE_MOBS, s.Name) then return true end
+        if table.find(K.CAKE_MOBS, s.Name) then return true end
     end
     for _, e in ipairs(workspace.Enemies:GetChildren()) do
-        if table.find(CAKE_MOBS, e.Name) then return true end
+        if table.find(K.CAKE_MOBS, e.Name) then return true end
     end
     return false
 end
@@ -247,7 +300,7 @@ local function nearBug(pos)
         local spot = bugSpots[i]
         if now > spot.untilT then
             table.remove(bugSpots, i)
-        elseif (spot.pos - pos).Magnitude <= BUG_RADIUS then
+        elseif (spot.pos - pos).Magnitude <= K.BUG_RADIUS then
             return true
         end
     end
@@ -266,9 +319,9 @@ local function watchdog()
             local rec = memberInfo[enemy]
             if not rec or humanoid.Health ~= rec.h then
                 memberInfo[enemy] = { h = humanoid.Health, t = os.clock() }
-            elseif os.clock() - rec.t > STUCK_TIME then
-                skipUntil[enemy] = os.clock() + SKIP_TIME
-                table.insert(bugSpots, { pos = BringPoint, untilT = os.clock() + BUG_TIME })
+            elseif os.clock() - rec.t > K.STUCK_TIME then
+                skipUntil[enemy] = os.clock() + K.SKIP_TIME
+                table.insert(bugSpots, { pos = BringPoint, untilT = os.clock() + K.BUG_TIME })
                 memberInfo[enemy] = nil
                 clearGroup()
                 attackFocus = nil
@@ -340,7 +393,7 @@ local function track(enemy)
             if enemy.Name == questMobName then
                 kills += 1
             end
-            if Kat.remaining and Kat.remaining > 0 and table.find(CAKE_MOBS, enemy.Name) then
+            if Kat.remaining and Kat.remaining > 0 and table.find(K.CAKE_MOBS, enemy.Name) then
                 Kat.remaining -= 1
             end
         end)
@@ -481,6 +534,7 @@ function Aim.install()
 end
 
 local function fastAttack()
+    if SeaCfg.SkillHold then return end
     local char = Player.Character
     local hrp = root()
     if not (char and hrp) then return end
@@ -496,6 +550,18 @@ local function fastAttack()
             for _, part in ipairs(enemy:GetChildren()) do
                 if part:IsA("BasePart") then
                     table.insert(targets, { enemy, part })
+                end
+            end
+        end
+    end
+    local focusModel = attackFocus
+    if SeaCfg.Auto and focusModel and focusModel.Parent ~= Workspace.Enemies then
+        local fRoot = focusModel:FindFirstChild("HumanoidRootPart") or focusModel.PrimaryPart
+        local fHum = focusModel:FindFirstChildOfClass("Humanoid")
+        if fRoot and (not fHum or fHum.Health > 0) and (fRoot.Position - hrp.Position).Magnitude <= 60 then
+            for _, part in ipairs(focusModel:GetChildren()) do
+                if part:IsA("BasePart") then
+                    table.insert(targets, { focusModel, part })
                 end
             end
         end
@@ -548,7 +614,7 @@ local function buildBringGroup(lead, names)
     for _, e in ipairs(workspace.Enemies:GetChildren()) do
         if e ~= lead and table.find(names, e.Name) and usable(e) then
             local d = (e.HumanoidRootPart.Position - leadPos).Magnitude
-            if d <= BRING_RANGE then
+            if d <= K.BRING_RANGE then
                 table.insert(candidates, { e, d })
             end
         end
@@ -579,7 +645,7 @@ local function onText(text)
     if type(text) ~= "string" then return end
     local t = text:lower()
     if t:find("pirate", 1, true) and (t:find("castle", 1, true) or t:find("invad", 1, true)) then
-        raidUntil = os.clock() + RAID_WAIT
+        raidUntil = os.clock() + K.RAID_WAIT
         raidLastSeen = os.clock()
         raidSawEnemies = false
     end
@@ -606,7 +672,7 @@ local function castleEnemies()
     for _, enemy in ipairs(workspace.Enemies:GetChildren()) do
         if alive(enemy) then
             local pos = enemy.HumanoidRootPart.Position
-            if (pos - CASTLE_POS).Magnitude <= CASTLE_RADIUS then
+            if (pos - K.CASTLE_POS).Magnitude <= K.CASTLE_RADIUS then
                 table.insert(list, { enemy, hrp and (pos - hrp.Position).Magnitude or 0 })
             end
         end
@@ -623,7 +689,7 @@ local function raidActive()
         return true
     end
     if raidSawEnemies then
-        if now - raidLastSeen > RAID_END_IDLE then
+        if now - raidLastSeen > K.RAID_END_IDLE then
             raidSawEnemies = false
             raidUntil = 0
             return false
@@ -639,11 +705,11 @@ local function handleRaid()
     if #list > 0 then
         local enemy = list[1][1]
         attackFocus = enemy
-        target = CFrame.new(enemy.HumanoidRootPart.Position + Vector3.new(0, HOVER_HEIGHT, 0))
+        target = CFrame.new(enemy.HumanoidRootPart.Position + Vector3.new(0, K.HOVER_HEIGHT, 0))
         click()
     else
         attackFocus = nil
-        target = CFrame.new(CASTLE_POS + Vector3.new(0, 30, 0))
+        target = CFrame.new(K.CASTLE_POS + Vector3.new(0, 30, 0))
     end
 end
 
@@ -661,7 +727,7 @@ end
 local function eliteQuestActive()
     if not questVisible() then return false end
     local title = questTitle():lower()
-    for _, name in ipairs(ELITE_BOSSES) do
+    for _, name in ipairs(K.ELITE_BOSSES) do
         if title:find(name:lower(), 1, true) then return true end
     end
     return false
@@ -669,7 +735,7 @@ end
 
 local function handleElite(boss, inWorld)
     clearGroup()
-    if not eliteQuestActive() and os.clock() - lastEliteCall > ELITE_CALL_COOLDOWN then
+    if not eliteQuestActive() and os.clock() - lastEliteCall > K.ELITE_CALL_COOLDOWN then
         lastEliteCall = os.clock()
         if questVisible() and questTitle() ~= "" then
             commF("AbandonQuest")
@@ -680,7 +746,7 @@ local function handleElite(boss, inWorld)
     end
     local hrp = boss:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    target = CFrame.new(hrp.Position + Vector3.new(0, HOVER_HEIGHT, 0))
+    target = CFrame.new(hrp.Position + Vector3.new(0, K.HOVER_HEIGHT, 0))
     if inWorld then
         attackFocus = boss
         click()
@@ -693,7 +759,7 @@ local function handleStackBoss(boss, inWorld)
     clearGroup()
     local hrp = boss:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    target = CFrame.new(hrp.Position + Vector3.new(0, HOVER_HEIGHT, 0))
+    target = CFrame.new(hrp.Position + Vector3.new(0, K.HOVER_HEIGHT, 0))
     if inWorld then
         attackFocus = boss
         click()
@@ -717,7 +783,7 @@ end
 local function handleSummon(essence)
     clearGroup()
     attackFocus = nil
-    target = SOUL_ALTAR
+    target = K.SOUL_ALTAR
     local char = Player.Character
     local hrp = root()
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -725,23 +791,146 @@ local function handleSummon(essence)
     if essence.Parent ~= char then
         humanoid:EquipTool(essence)
     end
-    if (hrp.Position - SOUL_ALTAR.Position).Magnitude <= 5 and os.clock() - lastSummonUse > 2 then
+    if (hrp.Position - K.SOUL_ALTAR.Position).Magnitude <= 5 and os.clock() - lastSummonUse > 2 then
         lastSummonUse = os.clock()
         essence:Activate()
     end
 end
 
+function Dough.hasChalice(kind)
+    for _, container in ipairs({ Player.Backpack, Player.Character }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                local name = tool.Name:lower()
+                if tool:IsA("Tool") and name:find("chalice", 1, true) and name:find(kind, 1, true) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- le o inventario (conjured cocoa e calices) a cada 3 segundos
+function Dough.readInventory()
+    if os.clock() - Dough.lastInv < 3 then return end
+    Dough.lastInv = os.clock()
+    local ok, inv = commF("getInventory")
+    if not (ok and type(inv) == "table") then return end
+    local cocoa, known, god, sweet = 0, false, false, false
+    for k, v in pairs(inv) do
+        local name, count
+        if type(v) == "table" then
+            name = tostring(v.Name or v.name or v.Item or ""):lower()
+            count = tonumber(v.Count or v.count or v.Amount or v.amount or v.Quantity or v.quantity) or 1
+        elseif type(v) == "number" and type(k) == "string" then
+            name, count = k:lower(), v
+        end
+        if name then
+            if name:find("cocoa", 1, true) then
+                cocoa += count
+                known = true
+            elseif name:find("chalice", 1, true) and count > 0 then
+                if name:find("god", 1, true) then god = true end
+                if name:find("sweet", 1, true) then sweet = true end
+            end
+        end
+    end
+    Dough.cocoa, Dough.cocoaKnown, Dough.invGod, Dough.invSweet = cocoa, known, god, sweet
+end
+
+-- fases: cocoa (farmar 10 conjured cocoa) -> craft (Sweet Crafter) -> kill (500 npcs + invocar Dough King)
+function Dough.update()
+    local phase
+    if Options.AutoDough and Options.AutoDough.Value and InSea3 then
+        pcall(Dough.readInventory)
+        local sweet = Dough.invSweet or Dough.hasChalice("sweet")
+        local god = Dough.invGod or Dough.hasChalice("god")
+        if sweet then
+            phase = "kill"
+        elseif god then
+            -- se o inventario nao mostra cocoa nenhum, tenta craftar mesmo assim de tempos em tempos
+            if Dough.cocoa >= K.COCOA_NEEDED or (not Dough.cocoaKnown and os.clock() >= Dough.probeAt) then
+                phase = "craft"
+            else
+                phase = "cocoa"
+            end
+        end
+    end
+    if phase ~= Dough.phase then
+        Dough.phase = phase
+        questId = nil
+        Kat.needCheck, Kat.remaining = true, nil
+        Kat.text = nil -- CORRIGIDO: zera o texto ao trocar de fase
+        clearGroup()
+        attackFocus = nil
+    end
+end
+
+function Dough.sweetCrafter()
+    local npcs = workspace:FindFirstChild("NPCs")
+    for _, npc in ipairs(npcs and npcs:GetChildren() or {}) do
+        if npc.Name:lower():find("sweet crafter", 1, true) then return npc end
+    end
+    return workspace:FindFirstChild("Sweet Crafter", true)
+end
+
+-- vai ate o Sweet Crafter (Chocolate Land) e troca God's Chalice + 10 Conjured Cocoa pelo Sweet Chalice
+function Dough.craft()
+    if os.clock() - Dough.lastCraft < 5 then return end
+    Dough.lastCraft = os.clock()
+
+    local npc = Dough.sweetCrafter()
+    if not npc then
+        flyTo(CFrame.new(K.ISLANDS["Chocolate Land"] + Vector3.new(0, 20, 0)), 10, 90)
+        local t0 = os.clock()
+        npc = Dough.sweetCrafter()
+        while not npc and farming and os.clock() - t0 < 5 do
+            task.wait(0.5)
+            npc = Dough.sweetCrafter()
+        end
+    end
+    if npc then
+        local okP, pivot = pcall(function() return npc:GetPivot() end)
+        if okP then flyTo(CFrame.new(pivot.Position + Vector3.new(0, 3, 0)), 8, 60) end
+    end
+    if not farming then return end
+
+    local _, res = commF("SweetChaliceNpc")
+    task.wait(1.5)
+    Dough.lastInv = -100
+    pcall(Dough.readInventory)
+
+    if not (Dough.invSweet or Dough.hasChalice("sweet")) then
+        Dough.probeAt = os.clock() + 90
+        if os.clock() - Dough.lastNotify > 20 then
+            Dough.lastNotify = os.clock()
+            Fluent:Notify({
+                Title = "Dough King",
+                Content = (npc and "Sweet Crafter achado" or "Sweet Crafter nao achado")
+                    .. " | cocoa: " .. Dough.cocoa .. " | resposta: " .. tostring(res):sub(1, 80),
+                Duration = 8,
+            })
+        end
+    end
+end
+
+-- CORRIGIDO: na fase kill so procura o Dough King (ignora Katakuri / Cake Prince)
 local function findBoss()
-    local boss = findEnemy(BOSS_NAMES, true)
+    local names = K.BOSS_NAMES
+    if Dough.phase == "kill" then names = { "Dough King" } end
+    local boss = findEnemy(names, true)
     if boss then return boss end
     for _, v in ipairs(ReplicatedStorage:GetChildren()) do
-        if table.find(BOSS_NAMES, v.Name) and alive(v) then return v end
+        if table.find(names, v.Name) and alive(v) then return v end
     end
 end
 
 local function applyCountText(res)
     local text = res ~= nil and tostring(res) or ""
     if text == "" or text == "false" or text == "nil" or text == "true" then return end
+
+    Kat.text = text:lower() -- CORRIGIDO: guarda a mensagem do servidor
 
     local nums = {}
     for d in text:gmatch("%d+") do table.insert(nums, tonumber(d)) end
@@ -778,14 +967,20 @@ local function applyCountText(res)
     if mode == "left" then
         Kat.remaining = n
     elseif mode == "killed" then
-        Kat.remaining = math.max(CAKE_TOTAL - n, 0)
+        Kat.remaining = math.max(K.CAKE_TOTAL - n, 0)
     else
         Kat.remaining = nil
     end
 end
 
+-- CORRIGIDO: na fase kill (Dough King) consulta sem o argumento true, como no codigo de referencia
 local function queryCount()
-    local ok, res = commF("CakePrinceSpawner", true)
+    local ok, res
+    if Dough.phase == "kill" then
+        ok, res = commF("CakePrinceSpawner")
+    else
+        ok, res = commF("CakePrinceSpawner", true)
+    end
     if ok then pcall(applyCountText, res) end
 end
 
@@ -793,7 +988,7 @@ task.spawn(function()
     while true do
         task.wait(2)
         if InSea3 and not traveling then
-            local farmingKat = farming and Options.Farm.Value and Options.MethodFarm.Value == "Katakuri"
+            local farmingKat = farming and ((Options.Farm.Value and Options.MethodFarm.Value == "Katakuri") or Dough.phase == "kill")
             if farmingKat or os.clock() - Kat.lastIdleQuery > 6 then
                 Kat.lastIdleQuery = os.clock()
                 queryCount()
@@ -806,7 +1001,7 @@ local function reachBoss()
     attackFocus = nil
     local ok, mirror = pcall(function() return workspace.Map.CakeLoaf.BigMirror.Main end)
     if not (ok and mirror) then
-        flyTo(CAKE_ENTRANCE, 8, 30)
+        flyTo(K.CAKE_ENTRANCE, 8, 30)
         return
     end
     local function touch()
@@ -837,6 +1032,7 @@ local function summonBoss()
     return false
 end
 
+-- CORRIGIDO: fase Dough King so invoca quando o servidor disser "open the portal now"
 local function katakuri()
     local hrp = root()
     if not hrp then return true end
@@ -844,13 +1040,13 @@ local function katakuri()
     local boss = findBoss()
     if boss then
         Kat.bossSeen = true
-        Stats.State = "Katakuri Boss"
+        Stats.State = Dough.phase == "kill" and "Dough King Boss" or "Katakuri Boss"
         clearGroup()
         if (boss.HumanoidRootPart.Position - hrp.Position).Magnitude > 1500 then
             reachBoss()
         else
             attackFocus = boss
-            target = CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0, HOVER_HEIGHT, 0))
+            target = CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0, K.HOVER_HEIGHT, 0))
             click()
         end
         return true
@@ -859,9 +1055,26 @@ local function katakuri()
     if Kat.bossSeen then
         Kat.bossSeen = false
         Kat.remaining = nil
+        Kat.text = nil
         Kat.needCheck = true
     end
 
+    -- FASE DOUGH KING
+    if Dough.phase == "kill" then
+        if Kat.text and Kat.text:find("open the portal now", 1, true) and os.clock() >= Kat.blockUntil then
+            clearGroup()
+            attackFocus = nil
+            Stats.State = "Summoning Dough King"
+            commF("CakePrinceSpawner")
+            task.wait(1)
+            Kat.text = nil
+            Kat.blockUntil = os.clock() + 5
+            return true
+        end
+        return false -- continua atacando os mobs de bolo ate liberar o portal
+    end
+
+    -- FASE KATAKURI NORMAL (V1), inalterada
     if Kat.needCheck then
         clearGroup()
         attackFocus = nil
@@ -1021,14 +1234,14 @@ local function killTarget(enemy, abort, stuck)
             attackFocus = nil
             return false, true
         end
-        local hoverPos = enemy.HumanoidRootPart.Position + Vector3.new(0, HOVER_HEIGHT, 0)
+        local hoverPos = enemy.HumanoidRootPart.Position + Vector3.new(0, K.HOVER_HEIGHT, 0)
         attackFocus = enemy
         if (hrp.Position - hoverPos).Magnitude > 50 then
             clearGroup()
             target = CFrame.new(hoverPos)
         else
             if BringGroup[1] ~= enemy or not BringPoint then buildBringGroup(enemy, enemyNames()) end
-            target = CFrame.new(BringPoint + Vector3.new(0, HOVER_HEIGHT, 0))
+            target = CFrame.new(BringPoint + Vector3.new(0, K.HOVER_HEIGHT, 0))
         end
         click()
         task.wait(0.03)
@@ -1709,6 +1922,490 @@ local function idle()
     Stats.State = "Idle"
 end
 
+do
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local function seaFarmSelected(name)
+    return SeaCfg.Farm[name] == true
+end
+
+local function ownedBoat(ignoreFar)
+    local boats = Workspace:FindFirstChild("Boats")
+    local playerRoot = root()
+    for _, boat in ipairs(boats and boats:GetChildren() or {}) do
+        if boat.Name == SeaCfg.Boat then
+            local owner = boat:FindFirstChild("Owner")
+            local value = owner and owner.Value
+            if value == Player or tostring(value) == Player.Name then
+                local seat = boat:FindFirstChild("VehicleSeat") or boat:FindFirstChildWhichIsA("VehicleSeat", true)
+                if seat then
+                    local tooFar = ignoreFar and playerRoot
+                        and (seat.Position - playerRoot.Position).Magnitude > SeaCfg.MaxBoatDist
+                    if not tooFar then return boat, seat end
+                end
+            end
+        end
+    end
+end
+
+local function buyBoat()
+    if os.clock() - SeaCfg.lastBuy < 5 then return end
+    SeaCfg.lastBuy = os.clock()
+    Stats.State = "Buy Boat"
+    flyAndWait(SeaCfg.DealerCFrame, 60, function() return not SeaCfg.Auto end)
+    if not SeaCfg.Auto then return end
+    target = nil
+    commF("BuyBoat", SeaCfg.Boat)
+    waitFor(function() return ownedBoat(SeaCfg.needNewBoat) end, 6)
+end
+
+local function sitOnBoat(seat)
+    local char = Player.Character
+    local hrp = root()
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if not (hrp and humanoid) then return false end
+    if humanoid.SeatPart == seat then return true end
+    if os.clock() - SeaCfg.lastSit < 1.5 then return false end
+    SeaCfg.lastSit = os.clock()
+    target = nil
+    hrp.CFrame = seat.CFrame * CFrame.new(0, 2, 0)
+    task.wait(0.4)
+    return humanoid.SeatPart == seat
+end
+
+local function seaKind(name, fromBeasts)
+    local lower = name:lower()
+    if lower:find("terror", 1, true) then return "Terror Shark" end
+    if lower:find("piranha", 1, true) then return "Piranha" end
+    if name == "Shark" then return "Shark" end
+    if fromBeasts then return "Sea Beast" end
+end
+
+local function modelPart(model)
+    return model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+end
+
+-- Terror Shark / Shark / Piranha may live outside workspace.Enemies, so also scan top-level folders
+local function extraScan()
+    if os.clock() - SeaCfg.extraT < 1.5 then return SeaCfg.extra end
+    SeaCfg.extraT = os.clock()
+    local found = {}
+    local function check(model)
+        if model:IsA("Model") and seaKind(model.Name, false) then table.insert(found, model) end
+    end
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if child:IsA("Model") then
+            check(child)
+        elseif child:IsA("Folder") and child.Name ~= "Map" and child.Name ~= "Boats" then
+            for _, inner in ipairs(child:GetChildren()) do check(inner) end
+        end
+    end
+    SeaCfg.extra = found
+    return found
+end
+
+local function seaMobs()
+    local list, seen = {}, {}
+    local hrp = root()
+    if not hrp then return list end
+
+    local function consider(model, fromBeasts)
+        if seen[model] or not model:IsA("Model") then return end
+        local kind = seaKind(model.Name, fromBeasts)
+        if not kind or not seaFarmSelected(kind) then return end
+        local part = modelPart(model)
+        if not part then return end
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.Health <= 0 then return end
+        local d = (part.Position - hrp.Position).Magnitude
+        if d > SeaCfg.Range then return end
+        seen[model] = true
+        table.insert(list, { model = model, part = part, dist = d, beast = kind == "Sea Beast", terror = kind == "Terror Shark" })
+    end
+
+    for _, model in ipairs(Workspace.Enemies:GetChildren()) do consider(model, false) end
+    local beasts = Workspace:FindFirstChild("SeaBeasts")
+    for _, model in ipairs(beasts and beasts:GetChildren() or {}) do consider(model, true) end
+    for _, model in ipairs(extraScan()) do consider(model, false) end
+
+    table.sort(list, function(x, y) return x.dist < y.dist end)
+    return list
+end
+
+local function terrorDodge()
+    local origin = Workspace:FindFirstChild("_WorldOrigin")
+    for _, child in ipairs(origin and origin:GetChildren() or {}) do
+        local name = child.Name:lower()
+        if name:find("sharkslam", 1, true) or name:find("spin", 1, true) or name:find("chargemodel", 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function unselectedSea()
+    local hrp = root()
+    if not hrp then return false end
+
+    local function near(part)
+        local dx = part.Position.X - hrp.Position.X
+        local dz = part.Position.Z - hrp.Position.Z
+        return math.sqrt(dx * dx + dz * dz) <= SeaCfg.Range
+    end
+
+    local function check(model, fromBeasts)
+        if not model:IsA("Model") then return false end
+        local kind = seaKind(model.Name, fromBeasts)
+        if not kind or seaFarmSelected(kind) then return false end
+        local part = modelPart(model)
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        return part ~= nil and (not humanoid or humanoid.Health > 0) and near(part)
+    end
+
+    for _, model in ipairs(Workspace.Enemies:GetChildren()) do
+        if check(model, false) then return true end
+    end
+    local beasts = Workspace:FindFirstChild("SeaBeasts")
+    for _, model in ipairs(beasts and beasts:GetChildren() or {}) do
+        if check(model, true) then return true end
+    end
+    for _, model in ipairs(extraScan()) do
+        if check(model, false) then return true end
+    end
+
+    -- boats that do not belong to any player (event ships)
+    local boats = Workspace:FindFirstChild("Boats")
+    for _, boat in ipairs(boats and boats:GetChildren() or {}) do
+        local owner = boat:FindFirstChild("Owner")
+        if not (owner and owner.Value) then
+            local part = modelPart(boat)
+            if part and near(part) then return true end
+        end
+    end
+    return false
+end
+
+RunService.Heartbeat:Connect(function()
+    if not SeaCfg.Auto then return end
+    local hrp = root()
+    if not hrp then return end
+
+    local dodge = SeaCfg.dodge
+    if dodge then
+        local now = os.clock()
+        if now - dodge.t0 >= 1 or now >= dodge.maxT then
+            hrp.CFrame = dodge.back
+            target = dodge.back
+            SeaCfg.dodge = nil
+        end
+        return
+    end
+
+    if not SeaCfg.terrorNear then return end
+    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.SeatPart then return end
+    if terrorDodge() then
+        Stats.State = "Dodging Terror Shark"
+        local now = os.clock()
+        SeaCfg.dodge = { back = hrp.CFrame, t0 = now, maxT = now + 10 }
+        attackFocus = nil
+        hrp.CFrame = hrp.CFrame + Vector3.new(0, 250, 0)
+        target = hrp.CFrame
+    end
+end)
+
+-- approximation of IsEntityAttacking: any non-looping animation playing on the entity
+function SeaCfg.isAttacking(model)
+    local ok, result = pcall(function()
+        local humanoid = model:FindFirstChildOfClass("Humanoid")
+        local animator = (humanoid and humanoid:FindFirstChildOfClass("Animator"))
+            or model:FindFirstChildWhichIsA("Animator", true)
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                if not track.Looped then return true end
+            end
+        end
+        return false
+    end)
+    return ok and result == true
+end
+
+function SeaCfg.dodgeBeast()
+    local beasts = Workspace:FindFirstChild("SeaBeasts")
+    for _, child in ipairs(beasts and beasts:GetChildren() or {}) do
+        if child:FindFirstChild("HumanoidRootPart") and SeaCfg.isAttacking(child) then
+            return true
+        end
+    end
+
+    local origin = Workspace:FindFirstChild("_WorldOrigin")
+    for _, child in ipairs(origin and origin:GetChildren() or {}) do
+        if child:IsA("BasePart") then
+            local name = child.Name:lower()
+            local flag = name:find("lightbullet", 1, true) or name:find("waterbeam", 1, true) or name:find("beastroar", 1, true)
+            if not flag then
+                flag = child.BrickColor == BrickColor.new("Toothpaste") and child.Size.Magnitude > 15
+            end
+            if flag then return true end
+        end
+    end
+
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if child:IsA("BasePart") then
+            local name = child.Name:lower()
+            if name:find("waterbeam", 1, true) or name:find("lightbullet", 1, true) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+RunService.Heartbeat:Connect(function()
+    local part = SeaCfg.beastPart
+    if not (SeaCfg.Auto and part and part.Parent) then
+        SeaCfg.beastDodging = false
+        return
+    end
+    local hrp = root()
+    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+    if not hrp or not humanoid or humanoid.SeatPart then return end
+
+    -- nunca deixa o personagem ficar debaixo da agua enquanto ataca o Sea Beast
+    local minY = SeaCfg.surfaceY + SeaCfg.BeastMinAbove
+    if hrp.Position.Y < SeaCfg.surfaceY - 5 then
+        hrp.CFrame = CFrame.new(hrp.Position.X, minY, hrp.Position.Z) * hrp.CFrame.Rotation
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        target = hrp.CFrame
+    end
+
+    local dodging = SeaCfg.dodgeBeast()
+    SeaCfg.beastDodging = dodging
+    if dodging then
+        local p = part.Position - part.CFrame.LookVector * 2
+        hrp.CFrame = CFrame.new(p.X, math.max(p.Y + 400, minY), p.Z) * hrp.CFrame.Rotation
+        target = hrp.CFrame
+    end
+end)
+
+K.SKILL_KEYS = { Enum.KeyCode.Z, Enum.KeyCode.X, Enum.KeyCode.C, Enum.KeyCode.V, Enum.KeyCode.F }
+K.TRANSFORM_FRUITS = { "dragon", "leopard", "kitsune", "t-rex", "trex", "yeti", "tiger", "mammoth", "venom", "gas" }
+K.SKILL_TOOLS = { "Melee", "Sword", "Blox Fruit", "Gun" }
+
+local function findToolByTip(tip)
+    local char = Player.Character
+    for _, container in ipairs({ char, Player.Backpack }) do
+        for _, tool in ipairs(container and container:GetChildren() or {}) do
+            if tool:IsA("Tool") and tool.ToolTip == tip then return tool end
+        end
+    end
+end
+
+local function releaseSkills(part)
+    if os.clock() - SeaCfg.lastSkill < 0.3 then return end
+    SeaCfg.lastSkill = os.clock()
+    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    SeaCfg.SkillHold = true
+    Aim.install()
+    for _, tip in ipairs(K.SKILL_TOOLS) do
+        if not (SeaCfg.Auto and part and part.Parent) then break end
+        local tool = findToolByTip(tip)
+        if tool then
+            humanoid:EquipTool(tool)
+            task.wait(0.15)
+            Aim.pos, Aim.part = part.Position, part
+            local skipV = false
+            if tip == "Blox Fruit" then
+                local lower = tool.Name:lower()
+                for _, word in ipairs(K.TRANSFORM_FRUITS) do
+                    if lower:find(word, 1, true) then skipV = true break end
+                end
+            end
+            for _, key in ipairs(K.SKILL_KEYS) do
+                if not (skipV and key == Enum.KeyCode.V) then
+                    VirtualInputManager:SendKeyEvent(true, key, false, game)
+                    task.wait(0.05)
+                    VirtualInputManager:SendKeyEvent(false, key, false, game)
+                    task.wait(0.05)
+                end
+            end
+        end
+    end
+    Aim.pos, Aim.part = nil, nil
+    SeaCfg.SkillHold = false
+end
+
+local function resetCharacter(reason)
+    Stats.State = reason
+    SeaCfg.needNewBoat = true
+    SeaCfg.hadBoat = false
+    target = nil
+    attackFocus = nil
+    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+    if humanoid then humanoid.Health = 0 end
+    task.wait(1)
+    waitFor(function()
+        local h = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+        return h and h.Health > 0 and root()
+    end, 15)
+end
+
+local function nearerToDealer(boatPos)
+    local hrp = root()
+    return hrp ~= nil and boatPos ~= nil
+        and (hrp.Position - SeaCfg.DealerCFrame.Position).Magnitude < (hrp.Position - boatPos).Magnitude
+end
+
+local function runSeaEvents()
+    local levelCF = SeaCfg.Levels[SeaCfg.Level]
+    if not levelCF then
+        Stats.State = "Sea: set Danger Level " .. SeaCfg.Level
+        target = nil
+        attackFocus = nil
+        return
+    end
+    SeaCfg.surfaceY = levelCF.Y
+
+    local hrp = root()
+    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
+    if not (hrp and humanoid) then return end
+
+    clearGroup()
+    SeaCfg.beastPart = nil
+
+    if SeaCfg.dodge then
+        hover(true)
+        attackFocus = nil
+        target = hrp.CFrame
+        return
+    end
+
+    local boatLost = false
+    local boat, seat = ownedBoat(SeaCfg.needNewBoat)
+    if boat then
+        SeaCfg.needNewBoat = false
+        SeaCfg.hadBoat = true
+        SeaCfg.lastBoatPos = seat.Position
+        if (seat.Position - hrp.Position).Magnitude > SeaCfg.MaxBoatDist then
+            if nearerToDealer(seat.Position) then
+                SeaCfg.needNewBoat = true
+                SeaCfg.hadBoat = false
+                attackFocus = nil
+                target = nil
+                buyBoat()
+            else
+                resetCharacter("Boat too far: resetting")
+            end
+            return
+        end
+    else
+        if not SeaCfg.hadBoat then
+            attackFocus = nil
+            buyBoat()
+            return
+        end
+        -- o barco morreu: ainda mata o que estiver por perto e so depois reseta
+        boatLost = true
+    end
+
+    local mobs = seaMobs()
+    local mob = mobs[1]
+    local hasTerror = false
+    for _, m in ipairs(mobs) do
+        if m.terror then hasTerror = true break end
+    end
+    SeaCfg.terrorNear = hasTerror
+
+    if mob then
+        if humanoid.SeatPart then
+            Stats.State = "Leaving boat"
+            attackFocus = nil
+            target = nil
+            humanoid.Sit = false
+            humanoid:ChangeState(Enum.HumanoidStateType.Jump)
+            task.wait(0.3)
+            return
+        end
+
+        hover(true)
+        Stats.State = "Sea: " .. mob.model.Name
+        local pos = mob.part.Position
+        if mob.beast then
+            attackFocus = nil
+            SeaCfg.beastPart = mob.part
+            local height = SeaCfg.beastDodging and 400 or 250
+            local behind = pos - mob.part.CFrame.LookVector * 2
+            -- o Sea Beast mergulha: nunca deixa o alvo ficar abaixo da altura minima sobre a agua
+            local goalY = math.max(pos.Y + height, levelCF.Y + SeaCfg.BeastMinAbove)
+            target = CFrame.new(behind.X, goalY, behind.Z) * hrp.CFrame.Rotation
+            if mob.dist <= 600 then releaseSkills(mob.part) end
+        else
+            local height = mob.terror and 40 or K.HOVER_HEIGHT
+            target = CFrame.new(pos + Vector3.new(0, height, 0)) * hrp.CFrame.Rotation
+            attackFocus = mob.model
+        end
+        return
+    end
+
+    attackFocus = nil
+
+    if boatLost then
+        if nearerToDealer(SeaCfg.lastBoatPos) then
+            SeaCfg.needNewBoat = true
+            SeaCfg.hadBoat = false
+            buyBoat()
+        else
+            resetCharacter("Boat destroyed: resetting")
+        end
+        return
+    end
+
+    if humanoid.SeatPart ~= seat then
+        Stats.State = "Returning to boat"
+        hover(true)
+        local seatCF = seat.CFrame * CFrame.new(0, 3, 0)
+        if (hrp.Position - seatCF.Position).Magnitude > 12 then
+            target = seatCF
+            return
+        end
+        target = nil
+        hover(false)
+        sitOnBoat(seat)
+        return
+    end
+
+    hover(false)
+    local flat = Vector3.new(levelCF.X - hrp.Position.X, 0, levelCF.Z - hrp.Position.Z).Magnitude
+    if SeaCfg.atSea and flat > 150 then SeaCfg.atSea = false end
+    if not SeaCfg.atSea and flat <= 30 then SeaCfg.atSea = true end
+
+    if SeaCfg.atSea then
+        if unselectedSea() then
+            Stats.State = "Avoiding unselected event"
+            target = CFrame.new(hrp.Position.X, levelCF.Y + 2000, hrp.Position.Z) * hrp.CFrame.Rotation
+        else
+            Stats.State = "Waiting Sea Events"
+            target = CFrame.new(levelCF.Position) * hrp.CFrame.Rotation
+        end
+    else
+        Stats.State = "Sailing to Danger Level " .. SeaCfg.Level
+        target = CFrame.new(levelCF.Position + Vector3.new(0, 40, 0)) * hrp.CFrame.Rotation
+    end
+end
+
+RunService.Stepped:Connect(function()
+    if not SeaCfg.Auto then return end
+    local boat = ownedBoat()
+    if not boat then return end
+    for _, part in ipairs(boat:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = false end
+    end
+end)
+
+SeaCfg.run = runSeaEvents
+end
+
 local Tyrant = {
     vases = {
         Vector3.new(-16230.123046875, 153.8718719482422, 1449.07373046875),
@@ -1854,9 +2551,13 @@ end
 local function step()
     if traveling then return end
 
-    local method = METHODS[Options.MethodFarm.Value]
+    Dough.update()
+    local methodName = Dough.phase == "cocoa" and "Cocoa"
+        or Dough.phase == "kill" and "Katakuri"
+        or Options.MethodFarm.Value
+    local method = K.METHODS[methodName]
     local questMob = pickMob(method)
-    local names = method.cake and CAKE_MOBS or allNames(method, questMob)
+    local names = method.cake and K.CAKE_MOBS or allNames(method, questMob)
     questMobName = questMob.name
 
     local function prep()
@@ -1875,6 +2576,14 @@ local function step()
         return
     end
 
+    if SeaCfg.Auto and not multiRaidActive() then
+        enableHaki()
+        lastMode = "sea"
+        Stats.State = "Sea Events"
+        SeaCfg.run()
+        return
+    end
+
     if multiRaidActive() then
         prep()
         lastMode = "multiraid"
@@ -1884,25 +2593,34 @@ local function step()
     end
 
     local stackBoss, stackInWorld
-    if Options.AttackDough.Value then
-        stackBoss, stackInWorld = findBossAny(DOUGH_BOSS)
+    if Options.AttackDough.Value or (Options.AutoDough and Options.AutoDough.Value) then
+        stackBoss, stackInWorld = findBossAny(K.DOUGH_BOSS)
     end
     if not stackBoss and Options.AttackRip.Value then
-        stackBoss, stackInWorld = findBossAny(RIP_BOSS)
+        stackBoss, stackInWorld = findBossAny(K.RIP_BOSS)
     end
     if not stackBoss and Options.KillSoulReaper.Value then
-        stackBoss, stackInWorld = findBossAny(SOUL_BOSS)
+        stackBoss, stackInWorld = findBossAny(K.SOUL_BOSS)
     end
     if stackBoss then
         prep()
         lastMode = "stack"
-        Stats.State = table.find(DOUGH_BOSS, stackBoss.Name) and "Dough King"
-            or table.find(SOUL_BOSS, stackBoss.Name) and "Soul Reaper" or "Rip Indra"
+        Stats.State = table.find(K.DOUGH_BOSS, stackBoss.Name) and "Dough King"
+            or table.find(K.SOUL_BOSS, stackBoss.Name) and "Soul Reaper" or "Rip Indra"
+        -- Dough King fica dentro do portal (igual ao Katakuri v1): longe demais, entra pelo espelho
+        if table.find(K.DOUGH_BOSS, stackBoss.Name) then
+            local hrp, bossRoot = root(), stackBoss:FindFirstChild("HumanoidRootPart")
+            if hrp and bossRoot and (bossRoot.Position - hrp.Position).Magnitude > 1500 then
+                clearGroup()
+                reachBoss()
+                return
+            end
+        end
         handleStackBoss(stackBoss, stackInWorld)
         return
     end
 
-    if Options.SummonSoulReaper.Value and not findEnemy(SOUL_BOSS, true) then
+    if Options.SummonSoulReaper.Value and not findEnemy(K.SOUL_BOSS, true) then
         local essence = findEssence()
         if essence then
             hover(true)
@@ -1932,8 +2650,9 @@ local function step()
         end
     end
 
-    if Options.EliteHunter.Value then
-        local eBoss, inWorld = findBossAny(ELITE_BOSSES)
+    -- com o Auto Dough King ligado e algum calice (de Deus ou doce), nao farma elite boss
+    if Options.EliteHunter.Value and not Dough.phase then
+        local eBoss, inWorld = findBossAny(K.ELITE_BOSSES)
         if eBoss then
             prep()
             lastMode = "elite"
@@ -1943,12 +2662,25 @@ local function step()
         end
     end
 
-    if not Options.Farm.Value or (method.cake and not InSea3) then
-        idle()
+    if Dough.phase == "craft" then
+        hover(true)
+        lastMode = "dough"
+        Stats.State = "Crafting Sweet Chalice"
+        clearGroup()
+        attackFocus = nil
+        Dough.craft()
         return
     end
 
-    if Options.MethodFarm.Value == "Tyrant Of The Skies" then
+    if not (Options.Farm.Value or Dough.phase) or (method.cake and not InSea3) then
+        idle()
+        if Options.AutoDough and Options.AutoDough.Value then
+            Stats.State = InSea3 and "Dough King: sem calice detectado" or "Dough King: so funciona no Sea 3"
+        end
+        return
+    end
+
+    if methodName == "Tyrant Of The Skies" then
         if findEnemy(method.bosses, true) then
             Tyrant.needReset = true
         elseif Tyrant.eyes() < 4 then
@@ -1972,23 +2704,28 @@ local function step()
         attackFocus = nil
     end
 
-    Stats.State = "Farming " .. Options.MethodFarm.Value
+    Stats.State = "Farming " .. methodName
+    if Dough.phase == "cocoa" then
+        Stats.State = "Dough King: Cocoa " .. Dough.cocoa .. "/" .. K.COCOA_NEEDED .. (Dough.cocoaKnown and "" or " (inventario sem cocoa)")
+    elseif Dough.phase == "kill" then
+        Stats.State = "Dough King: Katakuri npcs"
+    end
 
     if method.cake then
         if katakuri() then return end
     else
         local boss = findEnemy(method.bosses, true)
         if boss then
-            Stats.State = Options.MethodFarm.Value .. " Boss"
+            Stats.State = methodName .. " Boss"
             clearGroup()
             attackFocus = boss
-            target = CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0, HOVER_HEIGHT, 0))
+            target = CFrame.new(boss.HumanoidRootPart.Position + Vector3.new(0, K.HOVER_HEIGHT, 0))
             click()
             return
         end
     end
 
-    if Options.GetQuest.Value then
+    if Options.GetQuest.Value and not method.noQuest then
         local id = questMob.quest .. questMob.idx
         if questId ~= id or questDone() then
             clearGroup()
@@ -2007,15 +2744,15 @@ local function step()
     local lead = BringGroup[1]
     if BringPoint and lead and alive(lead) then
         attackFocus = lead
-        target = CFrame.new(BringPoint + Vector3.new(0, HOVER_HEIGHT, 0))
+        target = CFrame.new(BringPoint + Vector3.new(0, K.HOVER_HEIGHT, 0))
         click()
         return
     end
 
-    local enemy = (Options.GetQuest.Value and findEnemy({ questMob.name })) or findEnemy(names)
+    local enemy = (Options.GetQuest.Value and not method.noQuest and findEnemy({ questMob.name })) or findEnemy(names)
     if enemy then
         local hrp = root()
-        local hoverPos = enemy.HumanoidRootPart.Position + Vector3.new(0, HOVER_HEIGHT, 0)
+        local hoverPos = enemy.HumanoidRootPart.Position + Vector3.new(0, K.HOVER_HEIGHT, 0)
         attackFocus = enemy
         target = CFrame.new(hoverPos)
 
@@ -2025,7 +2762,7 @@ local function step()
         end
 
         buildBringGroup(enemy, names)
-        target = CFrame.new(BringPoint + Vector3.new(0, HOVER_HEIGHT, 0))
+        target = CFrame.new(BringPoint + Vector3.new(0, K.HOVER_HEIGHT, 0))
         click()
         return
     end
@@ -2033,7 +2770,7 @@ local function step()
     clearGroup()
     attackFocus = nil
     local unloaded = findUnloaded(names)
-    local pos = unloaded and unloaded.HumanoidRootPart.Position or findSpawn(names, method.cake and MOB_AREAS)
+    local pos = unloaded and unloaded.HumanoidRootPart.Position or findSpawn(names, method.cake and K.MOB_AREAS or method.area)
     if pos then
         target = CFrame.new(pos + Vector3.new(0, 25, 0))
     end
@@ -2056,7 +2793,7 @@ local function farmLoop()
 end
 
 local function startTraveling()
-    local dest = ISLANDS[Options.TravelIsland.Value]
+    local dest = K.ISLANDS[Options.TravelIsland.Value]
     if not dest then return end
 
     travelId += 1
@@ -2101,6 +2838,7 @@ Main:AddToggle("StoreFruits", { Title = "Auto Store Fruits", Default = false })
 
 Stack:AddToggle("AttackRip", { Title = "Auto Attack Rip Indra", Default = false })
 Stack:AddToggle("AttackDough", { Title = "Auto Attack Dough King", Default = false })
+Stack:AddToggle("AutoDough", { Title = "Auto Dough King", Default = false })
 Stack:AddToggle("SummonSoulReaper", { Title = "Auto Summon Soul Reaper", Default = false })
 Stack:AddToggle("KillSoulReaper", { Title = "Auto Kill Soul Reaper", Default = false })
 
@@ -2125,7 +2863,7 @@ do
             setText(katakuriLabel, okK and katText or "-")
 
             local okT, tyrText = pcall(function()
-                if findEnemy(METHODS["Tyrant Of The Skies"].bosses, true) then return "Spawned" end
+                if findEnemy(K.METHODS["Tyrant Of The Skies"].bosses, true) then return "Spawned" end
                 return Tyrant.eyes() .. "/4"
             end)
             setText(tyrantLabel, okT and tyrText or "0/4")
@@ -2195,7 +2933,7 @@ end
 
 Travel:AddDropdown("TravelIsland", {
     Title = "Island",
-    Values = ISLAND_NAMES,
+    Values = K.ISLAND_NAMES,
     Multi = false,
     Default = 1,
 })
@@ -2262,7 +3000,7 @@ Settings:AddDropdown("SelectWeapon", {
     Multi = false,
     Default = 1,
 }):OnChanged(function(value)
-    HOVER_HEIGHT = value == "Fruit(M1)" and 15 or 20
+    K.HOVER_HEIGHT = value == "Fruit(M1)" and 15 or 20
 end)
 
 Settings:AddDropdown("BringCount", {
@@ -2275,7 +3013,7 @@ Settings:AddDropdown("BringCount", {
 local function refresh()
     local want = Options.Farm.Value or Options.EliteHunter.Value or Options.CastleRaid.Value or Options.CollectFruits.Value
         or Options.AttackRip.Value or Options.AttackDough.Value or Options.SummonSoulReaper.Value
-        or Options.KillSoulReaper.Value or multiRaidActive() or RaidCfg.AutoBuyChip
+        or Options.KillSoulReaper.Value or Options.AutoDough.Value or multiRaidActive() or RaidCfg.AutoBuyChip or SeaCfg.Auto
     if want and not farming then
         farming = true
         task.spawn(farmLoop)
@@ -2292,6 +3030,7 @@ Options.AttackRip:OnChanged(refresh)
 Options.AttackDough:OnChanged(refresh)
 Options.SummonSoulReaper:OnChanged(refresh)
 Options.KillSoulReaper:OnChanged(refresh)
+Options.AutoDough:OnChanged(refresh)
 
 local function playerNames()
     local list = {}
@@ -2411,6 +3150,41 @@ MultiRaidSection:AddDropdown("RaidGuestSlot", {
 }):OnChanged(function(value)
     RaidCfg.GuestSlot = tonumber(value) or 1
 end)
+
+SeaTab:AddDropdown("SelectBoat", {
+    Title = "Select Your Boat",
+    Values = { "Guardian", "Lantern" },
+    Default = 1,
+}):OnChanged(function(value) SeaCfg.Boat = value end)
+
+SeaTab:AddDropdown("SeaFarm", {
+    Title = "Farm",
+    Values = { "Terror Shark", "Shark", "Piranha", "Sea Beast" },
+    Multi = true,
+    Default = {},
+}):OnChanged(function(value) SeaCfg.Farm = value end)
+
+SeaTab:AddDropdown("SeaDangerLevel", {
+    Title = "Select Sea Danger Level",
+    Values = { "1", "2", "3", "4", "5", "6" },
+    Default = 1,
+}):OnChanged(function(value) SeaCfg.Level = tonumber(value) or 1 end)
+
+SeaTab:AddToggle("AutoSeaEvents", { Title = "Auto Sea Events", Default = false })
+    :OnChanged(function(value)
+        SeaCfg.Auto = value
+        SeaCfg.hadBoat = false
+        SeaCfg.needNewBoat = false
+        SeaCfg.atSea = false
+        SeaCfg.dodge = nil
+        if not value then
+            target = nil
+            attackFocus = nil
+            Aim.pos, Aim.part = nil, nil
+            SeaCfg.SkillHold = false
+        end
+        refresh()
+    end)
 
 Player.Idled:Connect(function()
     VirtualUser:CaptureController()
