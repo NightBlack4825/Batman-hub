@@ -106,7 +106,7 @@ local ELITE_CALL_COOLDOWN = 5
 local CASTLE_POS = Vector3.new(-5496, 313, -2841)
 local CASTLE_RADIUS = 700
 local RAID_WAIT = 240
-local RAID_END_IDLE = 15
+local RAID_END_IDLE = 2
 
 local farming = false
 local traveling = false
@@ -133,6 +133,9 @@ local Stats = { State = "Idle", PauseStore = false, RaidMsg = "-", RaidsMulti = 
 
 local RaidCfg = {
     Multi = false,
+    Auto = false,
+    AutoBuyChip = false,
+    AutoUnstore = false,
     Pay = false,
     Secondary = false,
     Targets = {},
@@ -452,11 +455,35 @@ local function click()
     VirtualUser:Button1Up(Vector2.new(1280, 672))
 end
 
+local Aim = { hooked = false, pos = nil, part = nil, fruitPos = nil, fruitPart = nil }
+
+function Aim.install()
+    if Aim.hooked or not hookmetamethod then return end
+    Aim.hooked = true
+    local mouse = Player:GetMouse()
+    local wrap = newcclosure or function(f) return f end
+    local old
+    local ok = pcall(function()
+        old = hookmetamethod(game, "__index", wrap(function(self, key)
+            if self == mouse and not (checkcaller and checkcaller()) then
+                local pos = Aim.pos or Aim.fruitPos
+                if pos then
+                    if key == "Hit" then return CFrame.new(pos) end
+                    if key == "Target" then return Aim.part or Aim.fruitPart end
+                end
+            end
+            return old(self, key)
+        end))
+    end)
+    if not ok then Aim.hooked = false end
+end
+
 local function fastAttack()
     local char = Player.Character
     local hrp = root()
     if not (char and hrp) then return end
 
+    Aim.fruitPos, Aim.fruitPart = nil, nil
     equipWeapon()
 
     local targets = {}
@@ -478,10 +505,13 @@ local function fastAttack()
     local weapon = selectedWeapon()
 
     if weapon == "Fruit(M1)" then
+        local focus = alive(attackFocus) and attackFocus or targets[1][1]
+        local focusRoot = focus.HumanoidRootPart
+        Aim.install()
+        Aim.fruitPos, Aim.fruitPart = focusRoot.Position, focusRoot
         local remote = tool:FindFirstChild("LeftClickRemote")
         if not isFruit(tool) or not remote then return end
-        local focus = alive(attackFocus) and attackFocus or targets[1][1]
-        local direction = focus.HumanoidRootPart.Position - hrp.Position
+        local direction = focusRoot.Position - hrp.Position
         remote:FireServer(direction.Magnitude > 0 and direction.Unit or hrp.CFrame.LookVector, 1)
     elseif tool:GetAttribute("WeaponType") ~= weapon then
         return
@@ -894,11 +924,19 @@ end)
 local RaidTypes = { "Flame", "Ice", "Sand", "Dark", "Light", "Magma", "Quake", "Buddha", "Spider" }
 
 local function multiRaidActive()
-    return RaidCfg.Multi and (RaidCfg.Pay ~= RaidCfg.Secondary)
+    return RaidCfg.Auto or (RaidCfg.Multi and (RaidCfg.Pay ~= RaidCfg.Secondary))
 end
 
 local function abortMulti()
     return not multiRaidActive()
+end
+
+local function chipWanted()
+    return multiRaidActive() or RaidCfg.AutoBuyChip
+end
+
+local function abortChip()
+    return not chipWanted()
 end
 
 local function notify(title, content, duration)
@@ -1189,6 +1227,7 @@ local function raidFight(graceSeconds)
         end
     end
     attackFocus = nil
+    target = nil
     clearGroup()
     RaidArmed = false
     if (sawEnemy or Stats.RaidAuraKills > auraAtStart) and multiRaidActive() then
@@ -1379,10 +1418,10 @@ local function buyChip()
         if npc then
             local okp, pivot = pcall(function() return npc:GetPivot() end)
             if okp then
-                flyAndWait(CFrame.new(pivot.Position + Vector3.new(0, 3, 0)), 60, abortMulti)
+                flyAndWait(CFrame.new(pivot.Position + Vector3.new(0, 3, 0)), 60, abortChip)
             end
         end
-        if not multiRaidActive() then return end
+        if not chipWanted() then return end
 
         for _, t in ipairs(otherFruitTools()) do
             pcall(function() CommF:InvokeServer("StoreFruit", t:GetAttribute("OriginalName") or t.Name, t) end)
@@ -1394,17 +1433,22 @@ local function buyChip()
         end
 
         if not anyFruitTool() then
-            local okU, info = unstoreCheapFruit()
-            Stats.RaidMsg = okU and ("pagando com: " .. info) or info
-            if not okU and os.clock() - lastFruitNotify > 30 then
-                lastFruitNotify = os.clock()
-                notify("Raid", "Fruta para o chip: " .. info, 8)
+            if RaidCfg.AutoUnstore or RaidCfg.AutoBuyChip or (RaidCfg.Multi and RaidCfg.Pay) then
+                local okU, info = unstoreCheapFruit()
+                Stats.RaidMsg = okU and ("pagando com: " .. info) or info
+                if not okU and os.clock() - lastFruitNotify > 30 then
+                    lastFruitNotify = os.clock()
+                    notify("Raid", "Fruta para o chip: " .. info, 8)
+                end
+                task.wait(0.6)
+            else
+                raidWarn("sem fruta na mochila para o chip (ative Auto Unstore Fruit Under 1M)")
+                return
             end
-            task.wait(0.6)
         end
 
         for _ = 1, 3 do
-            if hasChip() or not multiRaidActive() then break end
+            if hasChip() or not chipWanted() then break end
             pcall(function() CommF:InvokeServer("RaidsNpc", "Select", RaidCfg.Chip) end)
             task.wait(1)
         end
@@ -1424,14 +1468,22 @@ local function pressRaidButton()
         raidWarn("este executor nao tem fireclickdetector")
         return false
     end
-    for _ = 1, 3 do
+    if raidGui() or farFromLobby() then return true end
+    target = nil
+    attackFocus = nil
+    clearGroup()
+    for _ = 1, 2 do
+        if raidGui() or farFromLobby() then return true end
         local hadChip = hasChip()
         pcall(fireclickdetector, det)
         local t0 = os.clock()
-        while os.clock() - t0 < 20 and multiRaidActive() do
+        while os.clock() - t0 < 30 and multiRaidActive() do
             task.wait(0.3)
             if raidGui() or farFromLobby() then return true end
-            if hadChip and not hasChip() then return true end
+            if hadChip and not hasChip() then
+                task.wait(3)
+                return true
+            end
         end
     end
     return false
@@ -1498,8 +1550,43 @@ local function runRaidSecondary()
     task.wait(0.5)
 end
 
+local lastChipTry = -100
+
+local function runAutoRaid()
+    if not InSea3 then
+        raidWarn("Auto Raid so funciona no Sea 3")
+        task.wait(2)
+        return
+    end
+    if inRaidNow() then
+        raidFight(0)
+        return
+    end
+    if not hasChip() then
+        raidWarn("sem chip para iniciar a raid")
+        target = nil
+        attackFocus = nil
+        clearGroup()
+        task.wait(2)
+        return
+    end
+    if not goToSpot(RaidCfg.HostCFrame) then task.wait(1) return end
+    RaidArmed = true
+    task.wait(1)
+    if pressRaidButton() then
+        raidFight(25)
+    else
+        RaidArmed = false
+        task.wait(2)
+    end
+end
+
 local function runMultiRaid()
-    if RaidCfg.Pay then runRaidPay() else runRaidSecondary() end
+    if RaidCfg.Multi and (RaidCfg.Pay ~= RaidCfg.Secondary) then
+        if RaidCfg.Pay then runRaidPay() else runRaidSecondary() end
+    else
+        runAutoRaid()
+    end
 end
 
 RunService.Heartbeat:Connect(function(dt)
@@ -1563,9 +1650,12 @@ end)
 task.spawn(function()
     while true do
         task.wait(0.01)
-        if farming and not traveling and attackFocus then
+        local autoClick = Options.AutoClick and Options.AutoClick.Value and selectedWeapon() ~= "Fruit(M1)"
+        if (farming and not traveling and attackFocus) or autoClick then
             local ok, err = pcall(fastAttack)
             if not ok then warn("[Batman Hub] fastAttack: " .. tostring(err)) end
+        else
+            Aim.fruitPos, Aim.fruitPart = nil, nil
         end
     end
 end)
@@ -1588,9 +1678,6 @@ local Tyrant = {
     },
     lastWarn = 0,
     needReset = false,
-    hooked = false,
-    aimPos = nil,
-    aimPart = nil,
 }
 
 function Tyrant.eyes()
@@ -1621,29 +1708,9 @@ function Tyrant.equipGuitar()
     return true
 end
 
--- silent aim: enquanto aimPos estiver definido, os scripts do jogo veem o mouse apontando para ele
-function Tyrant.installHook()
-    if Tyrant.hooked or not hookmetamethod then return end
-    Tyrant.hooked = true
-    local mouse = Player:GetMouse()
-    local wrap = newcclosure or function(f) return f end
-    local old
-    local ok = pcall(function()
-        old = hookmetamethod(game, "__index", wrap(function(self, key)
-            if Tyrant.aimPos and self == mouse and not (checkcaller and checkcaller()) then
-                if key == "Hit" then return CFrame.new(Tyrant.aimPos) end
-                if key == "Target" then return Tyrant.aimPart end
-            end
-            return old(self, key)
-        end))
-    end)
-    if not ok then Tyrant.hooked = false end
-end
-
-function Tyrant.shootDown(pos)
+function Tyrant.aimDown(pos, action)
     local char = Player.Character
-    local tool = char and char:FindFirstChildOfClass("Tool")
-    if not tool then return end
+    if not char then return end
 
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
@@ -1652,8 +1719,8 @@ function Tyrant.shootDown(pos)
     local aimPos = hit and hit.Position or (pos - Vector3.new(0, 20, 0))
     local aimPart = hit and hit.Instance
 
-    Tyrant.installHook()
-    Tyrant.aimPos, Tyrant.aimPart = aimPos, aimPart
+    Aim.install()
+    Aim.pos, Aim.part = aimPos, aimPart
 
     local camera = workspace.CurrentCamera
     RunService:BindToRenderStep("BatmanAimDown", Enum.RenderPriority.Camera.Value + 1, function()
@@ -1661,23 +1728,61 @@ function Tyrant.shootDown(pos)
         camera.CFrame = CFrame.new(camera.CFrame.Position) * CFrame.fromOrientation(-math.rad(89), yaw, 0)
     end)
     task.wait(0.2)
-
-    local shootEvent = Net:FindFirstChild("RE/ShootGunEvent")
-    local shootFunction = tool:FindFirstChild("RemoteFunctionShoot")
-    for _ = 1, 3 do
-        pcall(click)
-        if mouse1click then pcall(mouse1click) end
-        if shootEvent then
-            pcall(shootEvent.FireServer, shootEvent, aimPos, { aimPart })
-        end
-        if shootFunction then
-            task.spawn(pcall, shootFunction.InvokeServer, shootFunction, aimPos, aimPart)
-        end
-        task.wait(0.3)
-    end
+    pcall(action, aimPos, aimPart)
 
     RunService:UnbindFromRenderStep("BatmanAimDown")
-    Tyrant.aimPos, Tyrant.aimPart = nil, nil
+    Aim.pos, Aim.part = nil, nil
+end
+
+function Tyrant.shootDown(pos)
+    Tyrant.aimDown(pos, function(aimPos, aimPart)
+        local tool = Player.Character and Player.Character:FindFirstChildOfClass("Tool")
+        if not tool then return end
+        local shootEvent = Net:FindFirstChild("RE/ShootGunEvent")
+        local shootFunction = tool:FindFirstChild("RemoteFunctionShoot")
+        for _ = 1, 3 do
+            pcall(click)
+            if mouse1click then pcall(mouse1click) end
+            if shootEvent then
+                pcall(shootEvent.FireServer, shootEvent, aimPos, { aimPart })
+            end
+            if shootFunction then
+                task.spawn(pcall, shootFunction.InvokeServer, shootFunction, aimPos, aimPart)
+            end
+            task.wait(0.3)
+        end
+    end)
+end
+
+-- sem Skull Guitar: usa as skills de fruta, melee, sword e gun (nessa ordem)
+function Tyrant.useSkills(abort)
+    local char = Player.Character
+    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    local vim = game:GetService("VirtualInputManager")
+    local rank = { ["Blox Fruit"] = 1, Melee = 2, Sword = 3, Gun = 4 }
+    local list = {}
+    for _, container in ipairs({ Player.Backpack, char }) do
+        for _, tool in ipairs(container:GetChildren()) do
+            if tool:IsA("Tool") then
+                local kind = isFruit(tool) and "Blox Fruit" or tool.ToolTip
+                if rank[kind] then table.insert(list, { tool, rank[kind] }) end
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a[2] < b[2] end)
+    for _, entry in ipairs(list) do
+        if abort() then return end
+        humanoid:EquipTool(entry[1])
+        task.wait(0.3)
+        for _, key in ipairs({ Enum.KeyCode.Z, Enum.KeyCode.X, Enum.KeyCode.C, Enum.KeyCode.V, Enum.KeyCode.F }) do
+            if abort() then return end
+            vim:SendKeyEvent(true, key, false, game)
+            task.wait(0.1)
+            vim:SendKeyEvent(false, key, false, game)
+            task.wait(0.2)
+        end
+    end
 end
 
 function Tyrant.run(method)
@@ -1690,17 +1795,17 @@ function Tyrant.run(method)
         if abort() then return end
         flyTo(CFrame.new(pos), 8, 60, abort)
         if abort() then return end
-        if not Tyrant.equipGuitar() then
+        if Tyrant.equipGuitar() then
+            Tyrant.shootDown(pos)
+        else
             if os.clock() - Tyrant.lastWarn > 30 then
                 Tyrant.lastWarn = os.clock()
-                Fluent:Notify({ Title = "Batman Hub", Content = "Skull Guitar nao encontrada", Duration = 5 })
+                Fluent:Notify({ Title = "Batman Hub", Content = "Skull Guitar nao encontrada, usando skills", Duration = 5 })
             end
-            task.wait(1)
-            return
+            Tyrant.aimDown(pos, function() Tyrant.useSkills(abort) end)
         end
-        Tyrant.shootDown(pos)
         local t0 = os.clock()
-        while os.clock() - t0 < 3 and not abort() do
+        while os.clock() - t0 < 2 and not abort() do
             task.wait(0.2)
         end
     end
@@ -1718,6 +1823,16 @@ local function step()
         hover(true)
         enableHaki()
         equipWeapon()
+    end
+
+    if RaidCfg.AutoBuyChip and not (RaidCfg.Multi and (RaidCfg.Pay ~= RaidCfg.Secondary))
+        and not hasChip() and not inRaidNow() and os.clock() - lastChipTry > 5 then
+        lastChipTry = os.clock()
+        prep()
+        lastMode = "chip"
+        Stats.State = "Buy Chip"
+        buyChip()
+        return
     end
 
     if multiRaidActive() then
@@ -1960,6 +2075,33 @@ do
     end)
 end
 
+LocalTab:AddDropdown("Team", {
+    Title = "Team",
+    Values = { "Marine", "Pirate" },
+    Multi = false,
+    Default = 1,
+})
+
+do
+    local TEAMS = { Marine = "Marines", Pirate = "Pirates" }
+
+    local function joinTeam()
+        for _ = 1, 5 do
+            if Player.Team then return end
+            commF("SetTeam", TEAMS[Options.Team.Value])
+            task.wait(2)
+        end
+    end
+
+    task.spawn(function()
+        task.wait(2)
+        joinTeam()
+    end)
+    Options.Team:OnChanged(function()
+        task.spawn(joinTeam)
+    end)
+end
+
 LocalTab:AddToggle("AutoV3", { Title = "Auto Use V3", Default = false })
 LocalTab:AddToggle("AutoV4", { Title = "Auto Use V4", Default = false })
 
@@ -2005,6 +2147,16 @@ Travel:AddButton({
     Callback = startTraveling,
 })
 
+Travel:AddButton({
+    Title = "Stop Tween",
+    Callback = function()
+        travelId += 1
+        traveling = false
+        target = nil
+        if not farming then hover(false) end
+    end,
+})
+
 local fogHooked = false
 
 local function clearFog()
@@ -2044,12 +2196,16 @@ Settings:AddSlider("FlySpeed", {
     Rounding = 0,
 })
 
+Settings:AddToggle("AutoClick", { Title = "Auto Click", Default = false })
+
 Settings:AddDropdown("SelectWeapon", {
     Title = "Select Weapon",
     Values = { "Melee", "Sword", "Fruit(M1)" },
     Multi = false,
     Default = 1,
-})
+}):OnChanged(function(value)
+    HOVER_HEIGHT = value == "Fruit(M1)" and 15 or 20
+end)
 
 Settings:AddDropdown("BringCount", {
     Title = "Mobs In Bring Mob",
@@ -2060,7 +2216,7 @@ Settings:AddDropdown("BringCount", {
 
 local function refresh()
     local want = Options.Farm.Value or Options.EliteHunter.Value or Options.CastleRaid.Value or Options.CollectFruits.Value
-        or Options.AttackRip.Value or Options.AttackDough.Value or multiRaidActive()
+        or Options.AttackRip.Value or Options.AttackDough.Value or multiRaidActive() or RaidCfg.AutoBuyChip
     if want and not farming then
         farming = true
         task.spawn(farmLoop)
@@ -2094,7 +2250,33 @@ RaidTab:AddDropdown("RaidChip", {
     RaidCfg.Chip = value
 end)
 
-local RaidDropdown = RaidTab:AddDropdown("RaidPlayers", {
+RaidTab:AddToggle("AutoRaid", {
+    Title = "Auto Raid",
+    Default = false,
+}):OnChanged(function(value)
+    RaidCfg.Auto = value
+    RaidArmed = false
+    refresh()
+end)
+
+RaidTab:AddToggle("AutoBuyChip", {
+    Title = "Auto Buy Chip",
+    Default = false,
+}):OnChanged(function(value)
+    RaidCfg.AutoBuyChip = value
+    refresh()
+end)
+
+RaidTab:AddToggle("AutoUnstoreFruit", {
+    Title = "Auto Unstore Fruit Under 1M",
+    Default = false,
+}):OnChanged(function(value)
+    RaidCfg.AutoUnstore = value
+end)
+
+local MultiRaidSection = RaidTab:AddSection("Multi Raid")
+
+local RaidDropdown = MultiRaidSection:AddDropdown("RaidPlayers", {
     Title = "Contas Secundarias",
     Values = playerNames(),
     Multi = true,
@@ -2111,7 +2293,7 @@ RaidDropdown:OnChanged(function(value)
     RaidCfg.Targets = list
 end)
 
-RaidTab:AddButton({
+MultiRaidSection:AddButton({
     Title = "Atualizar Lista",
     Callback = function()
         local names = playerNames()
@@ -2125,7 +2307,7 @@ RaidTab:AddButton({
     end,
 })
 
-RaidTab:AddToggle("MultiRaid", {
+MultiRaidSection:AddToggle("MultiRaid", {
     Title = "Multi Raid",
     Default = false,
 }):OnChanged(function(value)
@@ -2134,7 +2316,7 @@ RaidTab:AddToggle("MultiRaid", {
     refresh()
 end)
 
-RaidTab:AddToggle("RaidPay", {
+MultiRaidSection:AddToggle("RaidPay", {
     Title = "Pagar Raid",
     Default = false,
 }):OnChanged(function(value)
@@ -2147,7 +2329,7 @@ RaidTab:AddToggle("RaidPay", {
     refresh()
 end)
 
-RaidTab:AddToggle("RaidSecondary", {
+MultiRaidSection:AddToggle("RaidSecondary", {
     Title = "Conta Secundaria",
     Default = false,
 }):OnChanged(function(value)
@@ -2160,7 +2342,7 @@ RaidTab:AddToggle("RaidSecondary", {
     refresh()
 end)
 
-RaidTab:AddDropdown("RaidGuestSlot", {
+MultiRaidSection:AddDropdown("RaidGuestSlot", {
     Title = "Slot da Conta Secundaria",
     Values = { "1", "2", "3" },
     Multi = false,
