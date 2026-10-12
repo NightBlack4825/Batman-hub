@@ -7,6 +7,8 @@ local Workspace = game:GetService("Workspace")
 
 local Player = Players.LocalPlayer
 local K = {}
+K.SEA2_IDS = { [79091703265657] = true, [4442272183] = true }
+local InSea2 = K.SEA2_IDS[game.PlaceId] == true
 
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local Options = Fluent.Options
@@ -23,8 +25,8 @@ local Window = Fluent:CreateWindow({
 
 local Main = Window:AddTab({ Title = "Main", Icon = "home" })
 local Stack = Window:AddTab({ Title = "Stack Farming", Icon = "layers" })
-local StatusTab = Window:AddTab({ Title = "Status", Icon = "activity" })
-local RaidTab = Window:AddTab({ Title = "Raid", Icon = "users" })
+local StatusTab = not InSea2 and Window:AddTab({ Title = "Status", Icon = "activity" }) or nil
+local RaidTab = not InSea2 and Window:AddTab({ Title = "Raid", Icon = "users" }) or nil
 local LocalTab = Window:AddTab({ Title = "Local Player", Icon = "user" })
 local Travel = Window:AddTab({ Title = "Travel", Icon = "plane" })
 local Misc = Window:AddTab({ Title = "Misc", Icon = "wrench" })
@@ -88,6 +90,33 @@ K.METHODS["Cocoa"] = {
 }
 K.COCOA_NEEDED = 10
 
+-- Sea 2: navio mal assombrado (Ectoplasma), fabrica (Core) e Darkbeard
+K.SHIP_POS = Vector3.new(923.21252441406, 126.9760055542, 32852.83203125)
+K.METHODS["Ectoplasm"] = {
+    sea2 = true,
+    ship = true,
+    bosses = {},
+    giver = CFrame.new(1037.80127, 125.092171, 32911.6016),
+    area = {
+        CFrame.new(1212.0111, 150.7920, 33059.2461),
+        CFrame.new(919.4786, 43.5440, 32779.9687),
+        CFrame.new(919.4786, 129.5560, 33436.0352),
+    },
+    mobs = {
+        { name = "Ship Deckhand", lvl = 1250, quest = "ShipQuest1", idx = 1 },
+        { name = "Ship Engineer", lvl = 1275, quest = "ShipQuest1", idx = 2 },
+        { name = "Ship Steward", lvl = 1300, quest = "ShipQuest2", idx = 1, giver = CFrame.new(968.80957, 125.092171, 33244.125) },
+        { name = "Ship Officer", lvl = 1325, quest = "ShipQuest2", idx = 2, giver = CFrame.new(968.80957, 125.092171, 33244.125) },
+    },
+}
+K.FACTORY_BOSS = { "Core" }
+K.FACTORY_CF = CFrame.new(448.46756, 199.356781, -441.389252)
+K.DARKBEARD = { "Darkbeard" }
+K.CURSED_CAPTAIN = { "Cursed Captain" }
+K.GHOUL_FILE = "BatmanHub_Ghoul.json"
+K.GHOUL_ECTO = 100
+K.GHOUL_LEVEL = 1000
+
 K.ISLAND_NAMES = {
     "Haunted Castle", "Tiki Outpost", "Castle On The Sea", "Mansion", "Hydra Island",
     "Port Town", "Great Tree", "Cake Land", "Chocolate Land",
@@ -103,6 +132,27 @@ K.ISLANDS = {
     ["Cake Land"] = Vector3.new(-1897, 13.819925308227539, -11576),
     ["Chocolate Land"] = Vector3.new(219, 126.62200927734375, -12604),
 }
+
+if InSea2 then
+    K.ISLAND_NAMES = {
+        "Café", "First Spot", "Dark Arena", "Don Swan Mansion", "Green Zone", "Graveyard",
+        "Snow Mountain", "Hot and Cold", "Cursed Ship", "Ice Castle", "Forgotten Island", "Remote Island",
+    }
+    K.ISLANDS = {
+        ["Café"] = Vector3.new(-11, 29, 2771),
+        ["First Spot"] = Vector3.new(-11, 29, 2771),
+        ["Dark Arena"] = Vector3.new(3494, 13, -3259),
+        ["Don Swan Mansion"] = Vector3.new(-317, 331, 597),
+        ["Green Zone"] = Vector3.new(-2258, 73, -2696),
+        ["Graveyard"] = Vector3.new(-5552, 194, -776),
+        ["Snow Mountain"] = Vector3.new(752, 408, -5277),
+        ["Hot and Cold"] = Vector3.new(-6008, 29, -5018),
+        ["Cursed Ship"] = K.SHIP_POS,
+        ["Ice Castle"] = Vector3.new(5505, 40, -6178),
+        ["Forgotten Island"] = Vector3.new(-3050, 240, -10178),
+        ["Remote Island"] = Vector3.new(4816, 8, 2863),
+    }
+end
 
 K.BRING_RANGE = 300
 K.HOVER_HEIGHT = 20
@@ -141,6 +191,8 @@ local InSea3 = false
 local lastMode = "farm"
 local lastEliteCall = 0
 local lastHaki = 0
+local lastShipEnter = 0
+local ShipPortalPart = nil
 local lastSim = 0
 local raidUntil, raidLastSeen, raidSawEnemies = 0, 0, false
 
@@ -1178,6 +1230,51 @@ task.spawn(function()
             commF("Bones", "Buy", 1, 1)
         end
         task.wait(0.5)
+    end
+end)
+
+task.spawn(function()
+    local function spin()
+        local gacha = Net:FindFirstChild("RF/GachaNetworkRF")
+        if not gacha then return end
+        pcall(function()
+            gacha:InvokeServer({
+                Context = "Purchase",
+                BoxName = "ZiolesGacha",
+            })
+        end)
+    end
+
+    while true do
+        local delay = 1
+        if Options.RandomFruit and Options.RandomFruit.Value then
+            -- so gira quando o jogo diz que esta liberado; em cooldown espera e checa de novo
+            local okCheck, ready = commF("Cousin", "CheckTime", "DLCBoxData")
+            if okCheck and ready == true then
+                spin()
+                delay = 3
+            elseif okCheck then
+                delay = 10
+            else
+                -- nao deu para checar o tempo: tenta girar, mas devagar
+                spin()
+                delay = 30
+            end
+
+            -- fecha o menu do spinner
+            local spinnerWindow = Player.PlayerGui:FindFirstChild("SpinnerWindow")
+            if spinnerWindow then
+                local above = spinnerWindow:FindFirstChild("AboveSpinner")
+                local nav = above and above:FindFirstChild("Navigation")
+                local closeButton = nav and nav:FindFirstChild("CloseButton")
+                if closeButton and closeButton.Visible and firesignal then
+                    pcall(function()
+                        firesignal(closeButton.Activated)
+                    end)
+                end
+            end
+        end
+        task.wait(delay)
     end
 end)
 
@@ -2648,11 +2745,229 @@ function Tyrant.run(method)
     end
 end
 
+-- procura o portal do navio no mapa (uma vez; fica guardado)
+local function findShipPortal()
+    if ShipPortalPart and ShipPortalPart.Parent then return ShipPortalPart end
+    ShipPortalPart = nil
+    local map = workspace:FindFirstChild("Map")
+    for _, d in ipairs(map and map:GetDescendants() or {}) do
+        if d:IsA("BasePart") then
+            local n = (d.Name .. " " .. (d.Parent and d.Parent.Name or "")):lower()
+            if n:find("ship", 1, true)
+                and (n:find("portal", 1, true) or n:find("entrance", 1, true) or n:find("teleport", 1, true)) then
+                ShipPortalPart = d
+                break
+            end
+        end
+    end
+    return ShipPortalPart
+end
+
+-- entra no navio pelo portal (se nao achar ou nao funcionar, pede a entrada ao jogo); true = estava agindo
+local function enterShip()
+    local hrp = root()
+    if not hrp or (hrp.Position - K.SHIP_POS).Magnitude <= 2500 then return false end
+    if os.clock() - lastShipEnter <= 8 then return true end
+    lastShipEnter = os.clock()
+    clearGroup()
+    attackFocus = nil
+    Stats.State = "Entering Cursed Ship"
+
+    local portal = findShipPortal()
+    if portal then
+        flyTo(CFrame.new(portal.Position), 6, 90)
+        if not farming then return true end
+        pcall(function()
+            local r = root()
+            firetouchinterest(r, portal, 0)
+            task.wait(0.1)
+            firetouchinterest(r, portal, 1)
+        end)
+        waitFor(function()
+            local r = root()
+            return r and (r.Position - K.SHIP_POS).Magnitude <= 2500
+        end, 6)
+    end
+
+    local after = root()
+    if after and (after.Position - K.SHIP_POS).Magnitude > 2500 then
+        commF("requestEntrance", K.SHIP_POS)
+        task.wait(1.5)
+    end
+    lastShipEnter = os.clock()
+    return true
+end
+
+-- Auto Get Ghoul Race Fully: capitao -> (tocha) -> ectoplasma -> Experimic
+local Ghoul = { phase = nil, ecto = 0, ectoKnown = false, lastInv = -100, probeAt = 0, lastBuy = -100,
+    lastHop = -100, lastCaptainSeen = 0, since = os.clock(), warnedLevel = false }
+
+function Ghoul.hasTorch()
+    for _, container in ipairs({ Player.Backpack, Player.Character }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") and tool.Name:lower():find("hellfire", 1, true) then return true end
+            end
+        end
+    end
+    return false
+end
+
+function Ghoul.race()
+    local ok, v = pcall(function() return Player.Data.Race.Value end)
+    return ok and v or nil
+end
+
+function Ghoul.readEcto()
+    if os.clock() - Ghoul.lastInv < 3 then return end
+    Ghoul.lastInv = os.clock()
+    local ok, inv = commF("getInventory")
+    if not (ok and type(inv) == "table") then return end
+    local total, known = 0, false
+    for k, v in pairs(inv) do
+        local name, count
+        if type(v) == "table" then
+            name = tostring(v.Name or v.name or v.Item or ""):lower()
+            count = tonumber(v.Count or v.count or v.Amount or v.amount or v.Quantity or v.quantity) or 1
+        elseif type(v) == "number" and type(k) == "string" then
+            name, count = k:lower(), v
+        end
+        if name and name:find("ectoplasm", 1, true) then
+            total += count
+            known = true
+        end
+    end
+    Ghoul.ecto, Ghoul.ectoKnown = total, known
+end
+
+function Ghoul.finish(reason)
+    notify("Ghoul Race", reason, 8)
+    pcall(function() Options.AutoGhoul:SetValue(false) end)
+end
+
+function Ghoul.update()
+    local phase
+    if Options.AutoGhoul and Options.AutoGhoul.Value and InSea2 then
+        local lvl = 0
+        pcall(function() lvl = Player.Data.Level.Value end)
+        if Ghoul.race() == "Ghoul" then
+            Ghoul.finish("Voce ja e Ghoul!")
+        elseif lvl < K.GHOUL_LEVEL then
+            Ghoul.finish("Precisa do level " .. K.GHOUL_LEVEL .. " (a tocha nao dropa antes)")
+        else
+            pcall(Ghoul.readEcto)
+            if Ghoul.hasTorch() then
+                if Ghoul.ecto >= K.GHOUL_ECTO or (not Ghoul.ectoKnown and os.clock() >= Ghoul.probeAt) then
+                    phase = "buy"
+                else
+                    phase = "ecto"
+                end
+            else
+                phase = "captain"
+            end
+        end
+    end
+    if phase ~= Ghoul.phase then
+        Ghoul.phase = phase
+        questId = nil
+        clearGroup()
+        attackFocus = nil
+    end
+end
+
+-- compra a raca com o Experimic (100 Ectoplasma + Hellfire Torch)
+function Ghoul.buy()
+    if os.clock() - Ghoul.lastBuy < 6 then return end
+    Ghoul.lastBuy = os.clock()
+    if enterShip() then return end
+
+    local npc = findNPCByName("Experimic")
+    if npc then
+        local okP, pivot = pcall(function() return npc:GetPivot() end)
+        if okP then flyTo(CFrame.new(pivot.Position + Vector3.new(0, 3, 0)), 8, 60) end
+    end
+    if not farming then return end
+
+    local _, checkRes = commF("Ectoplasm", "BuyCheck", 4)
+    task.wait(0.5)
+    local _, changeRes = commF("Ectoplasm", "Change", 4)
+    task.wait(1.5)
+
+    if Ghoul.race() == "Ghoul" then
+        Ghoul.finish("Raca Ghoul comprada!")
+    else
+        Ghoul.probeAt = os.clock() + 90
+        notify("Ghoul Race", (npc and "Experimic achado" or "Experimic nao achado")
+            .. " | ectoplasma: " .. Ghoul.ecto .. " | " .. tostring(checkRes):sub(1, 40)
+            .. " / " .. tostring(changeRes):sub(1, 40), 8)
+    end
+end
+
+-- troca de server pelo __ServerBrowser do jogo: consulta as paginas 1 a 100 e entra no primeiro com vaga
+function Ghoul.hop()
+    if Ghoul.hopping or os.clock() - Ghoul.lastHop < 15 then return end
+    Ghoul.hopping = true
+    Ghoul.lastHop = os.clock()
+
+    -- guarda que o Auto Ghoul estava ligado, para continuar no proximo server
+    pcall(function()
+        if writefile then writefile(K.GHOUL_FILE, "{\"active\":true}") end
+    end)
+
+    task.spawn(function()
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local browser = (remotes and remotes:FindFirstChild("__ServerBrowser"))
+            or ReplicatedStorage:FindFirstChild("__ServerBrowser", true)
+        if not browser then
+            notify("Ghoul Race", "__ServerBrowser nao encontrado", 6)
+            Ghoul.hopping = false
+            return
+        end
+
+        -- cancela se desligou o Auto Ghoul ou se a tocha dropou (ela se perde ao sair do server)
+        local function cancelled()
+            return not (Options.AutoGhoul and Options.AutoGhoul.Value)
+                or Ghoul.phase ~= "captain"
+                or Ghoul.hasTorch()
+        end
+
+        local found = false
+        for i = 1, 100 do
+            if found or cancelled() then break end
+            task.spawn(function()
+                if found or cancelled() then return end
+                local ok, result = pcall(function()
+                    return browser:InvokeServer(i)
+                end)
+                if ok and type(result) == "table" then
+                    for k, v in pairs(result) do
+                        if not found and not cancelled()
+                            and type(v) == "table" and v.Count and v.Count < 12 and k ~= game.JobId then
+                            found = true
+                            notify("Server Hop", "Server found! Teleporting...", 5)
+                            pcall(function()
+                                if not cancelled() then
+                                    browser:InvokeServer("teleport", k)
+                                end
+                            end)
+                        end
+                    end
+                end
+            end)
+        end
+
+        task.wait(10)
+        Ghoul.hopping = false
+    end)
+end
+
 local function step()
     if traveling then return end
 
     Dough.update()
-    local methodName = Dough.phase == "cocoa" and "Cocoa"
+    Ghoul.update()
+    local methodName = Ghoul.phase == "ecto" and "Ectoplasm"
+        or Dough.phase == "cocoa" and "Cocoa"
         or Dough.phase == "kill" and "Katakuri"
         or Options.MethodFarm.Value
     local method = K.METHODS[methodName]
@@ -2702,11 +3017,15 @@ local function step()
     if not stackBoss and Options.KillSoulReaper.Value then
         stackBoss, stackInWorld = findBossAny(K.SOUL_BOSS)
     end
+    if not stackBoss and Options.AttackDarkbeard and Options.AttackDarkbeard.Value then
+        stackBoss, stackInWorld = findBossAny(K.DARKBEARD)
+    end
     if stackBoss then
         prep()
         lastMode = "stack"
         Stats.State = table.find(K.DOUGH_BOSS, stackBoss.Name) and "Dough King"
-            or table.find(K.SOUL_BOSS, stackBoss.Name) and "Soul Reaper" or "Rip Indra"
+            or table.find(K.SOUL_BOSS, stackBoss.Name) and "Soul Reaper"
+            or table.find(K.DARKBEARD, stackBoss.Name) and "Darkbeard" or "Rip Indra"
         -- Dough King fica dentro do portal (igual ao Katakuri v1): longe demais, entra pelo espelho
         if table.find(K.DOUGH_BOSS, stackBoss.Name) then
             local hrp, bossRoot = root(), stackBoss:FindFirstChild("HumanoidRootPart")
@@ -2736,6 +3055,52 @@ local function step()
         lastMode = "raid"
         Stats.State = "Pirate Raid"
         handleRaid()
+        return
+    end
+
+    if Options.AutoFactory and Options.AutoFactory.Value then
+        local core, coreInWorld = findBossAny(K.FACTORY_BOSS)
+        if core then
+            prep()
+            lastMode = "factory"
+            Stats.State = "Factory Core"
+            handleStackBoss(core, coreInWorld)
+            return
+        end
+    end
+
+    if Ghoul.phase == "buy" then
+        hover(true)
+        lastMode = "ghoul"
+        Stats.State = "Ghoul: comprando a raca"
+        clearGroup()
+        attackFocus = nil
+        Ghoul.buy()
+        return
+    end
+
+    if Ghoul.phase == "captain" then
+        lastMode = "ghoul"
+        if enterShip() then return end
+        local captain, captainInWorld = findBossAny(K.CURSED_CAPTAIN)
+        if captain then
+            Ghoul.lastCaptainSeen = os.clock()
+            prep()
+            Stats.State = "Ghoul: Cursed Captain"
+            handleStackBoss(captain, captainInWorld)
+            return
+        end
+        -- sem capitao: espera 3s (carregar / dropar) e troca de server
+        hover(true)
+        clearGroup()
+        attackFocus = nil
+        target = nil
+        if os.clock() - math.max(Ghoul.since, Ghoul.lastCaptainSeen, lastShipEnter) > 3 then
+            Stats.State = "Ghoul: trocando de server"
+            Ghoul.hop()
+        else
+            Stats.State = "Ghoul: procurando Cursed Captain"
+        end
         return
     end
 
@@ -2772,7 +3137,7 @@ local function step()
         return
     end
 
-    if not (Options.Farm.Value or Dough.phase) or (method.cake and not InSea3) then
+    if not (Options.Farm.Value or Dough.phase or Ghoul.phase == "ecto") or (method.cake and not InSea3) or (method.sea2 and not InSea2) then
         idle()
         if Options.AutoDough and Options.AutoDough.Value then
             Stats.State = InSea3 and "Dough King: sem calice detectado" or "Dough King: so funciona no Sea 3"
@@ -2804,11 +3169,18 @@ local function step()
         attackFocus = nil
     end
 
+    if method.ship and enterShip() then
+        return
+    end
+
     Stats.State = "Farming " .. methodName
     if Dough.phase == "cocoa" then
         Stats.State = "Dough King: Cocoa " .. Dough.cocoa .. "/" .. K.COCOA_NEEDED .. (Dough.cocoaKnown and "" or " (inventario sem cocoa)")
     elseif Dough.phase == "kill" then
         Stats.State = "Dough King: Katakuri npcs"
+    end
+    if Ghoul.phase == "ecto" then
+        Stats.State = "Ghoul: Ectoplasm " .. Ghoul.ecto .. "/" .. K.GHOUL_ECTO
     end
 
     if method.cake then
@@ -2904,6 +3276,40 @@ local function startTraveling()
 
     task.spawn(function()
         hover(true)
+
+        -- Cursed Ship: vai ate o portal e entra por ele (se falhar, pede a entrada direto ao jogo)
+        if InSea2 and Options.TravelIsland.Value == "Cursed Ship" then
+            local portal = findShipPortal()
+            if portal then
+                target = CFrame.new(portal.Position)
+                local t0 = os.clock()
+                while traveling and travelId == id and root()
+                    and (root().Position - portal.Position).Magnitude > 6 and os.clock() - t0 < 90 do
+                    task.wait()
+                end
+                if traveling and travelId == id then
+                    pcall(function()
+                        local r = root()
+                        firetouchinterest(r, portal, 0)
+                        task.wait(0.1)
+                        firetouchinterest(r, portal, 1)
+                    end)
+                    local t1 = os.clock()
+                    while traveling and travelId == id and os.clock() - t1 < 6 do
+                        local r = root()
+                        if r and (r.Position - K.SHIP_POS).Magnitude <= 2500 then break end
+                        task.wait(0.2)
+                    end
+                end
+            end
+            local r = root()
+            if traveling and travelId == id and r and (r.Position - K.SHIP_POS).Magnitude > 2500 then
+                commF("requestEntrance", K.SHIP_POS)
+                task.wait(1.5)
+            end
+        end
+
+        if not (traveling and travelId == id) then return end
         target = CFrame.new(dest)
         while traveling and travelId == id and root() and (root().Position - dest).Magnitude > 10 do
             task.wait()
@@ -2923,26 +3329,49 @@ end
 
 Main:AddDropdown("MethodFarm", {
     Title = "Method Farm",
-    Values = { "Katakuri", "Bones", "Tyrant Of The Skies" },
+    Values = InSea2 and { "Ectoplasm" } or { "Katakuri", "Bones", "Tyrant Of The Skies" },
     Multi = false,
     Default = 1,
 })
 
 Main:AddToggle("Farm", { Title = "Farm", Default = false })
 Main:AddToggle("GetQuest", { Title = "Get Quest", Default = false })
-Main:AddToggle("RandomBone", { Title = "Auto Random Bone", Default = false })
-Main:AddToggle("EliteHunter", { Title = "Auto Elite Hunter", Default = false })
-Main:AddToggle("CastleRaid", { Title = "Auto Castle Raid", Default = false })
-Main:AddToggle("CollectFruits", { Title = "Auto Collect Fruits", Default = false })
+if not InSea2 then
+    Main:AddToggle("RandomBone", { Title = "Auto Random Bone", Default = false })
+end
+Main:AddToggle("RandomFruit", { Title = "Auto Random Fruit", Default = false })
+if InSea2 then
+    Main:AddToggle("CollectFruits", { Title = "Auto Get Fruit", Default = false })
+    Main:AddToggle("AutoFactory", { Title = "Auto Factory", Default = false })
+else
+    Main:AddToggle("EliteHunter", { Title = "Auto Elite Hunter", Default = false })
+    Main:AddToggle("CastleRaid", { Title = "Auto Castle Raid", Default = false })
+    Main:AddToggle("CollectFruits", { Title = "Auto Collect Fruits", Default = false })
+end
 Main:AddToggle("StoreFruits", { Title = "Auto Store Fruits", Default = false })
 
-Stack:AddToggle("AttackRip", { Title = "Auto Attack Rip Indra", Default = false })
-Stack:AddToggle("AttackDough", { Title = "Auto Attack Dough King", Default = false })
-Stack:AddToggle("AutoDough", { Title = "Auto Dough King", Default = false })
-Stack:AddToggle("SummonSoulReaper", { Title = "Auto Summon Soul Reaper", Default = false })
-Stack:AddToggle("KillSoulReaper", { Title = "Auto Kill Soul Reaper", Default = false })
+if InSea2 then
+    Stack:AddToggle("AttackDarkbeard", { Title = "Attack Darkbeard", Default = false })
+    Stack:AddToggle("AutoGhoul", { Title = "Auto Get Ghoul Race Fully", Default = false })
+else
+    Stack:AddToggle("AttackRip", { Title = "Auto Attack Rip Indra", Default = false })
+    Stack:AddToggle("AttackDough", { Title = "Auto Attack Dough King", Default = false })
+    Stack:AddToggle("AutoDough", { Title = "Auto Dough King", Default = false })
+    Stack:AddToggle("SummonSoulReaper", { Title = "Auto Summon Soul Reaper", Default = false })
+    Stack:AddToggle("KillSoulReaper", { Title = "Auto Kill Soul Reaper", Default = false })
+end
 
-do
+-- no Sea 2 as opcoes do Sea 3 nao existem; o resto do codigo le Options.X, entao entram valores desligados
+if InSea2 then
+    for _, name in ipairs({
+        "RandomBone", "EliteHunter", "CastleRaid",
+        "AttackRip", "AttackDough", "AutoDough", "SummonSoulReaper", "KillSoulReaper",
+    }) do
+        Options[name] = { Value = false, Stub = true, OnChanged = function() end, SetValue = function() end }
+    end
+end
+
+if not InSea2 then
     local stateLabel = StatusTab:AddParagraph({ Title = "State:", Content = "Idle" })
     local katakuriLabel = StatusTab:AddParagraph({ Title = "Katakuri:", Content = "-" })
     local tyrantLabel = StatusTab:AddParagraph({ Title = "Tyrant Of The Skies:", Content = "0/4" })
@@ -3113,7 +3542,10 @@ Settings:AddDropdown("BringCount", {
 local function refresh()
     local want = Options.Farm.Value or Options.EliteHunter.Value or Options.CastleRaid.Value or Options.CollectFruits.Value
         or Options.AttackRip.Value or Options.AttackDough.Value or Options.SummonSoulReaper.Value
-        or Options.KillSoulReaper.Value or Options.AutoDough.Value or multiRaidActive() or RaidCfg.AutoBuyChip or SeaCfg.Auto
+        or Options.KillSoulReaper.Value or Options.AutoDough.Value
+        or (Options.AutoFactory and Options.AutoFactory.Value) or (Options.AttackDarkbeard and Options.AttackDarkbeard.Value)
+        or (Options.AutoGhoul and Options.AutoGhoul.Value)
+        or multiRaidActive() or RaidCfg.AutoBuyChip or SeaCfg.Auto
     if want and not farming then
         farming = true
         task.spawn(farmLoop)
@@ -3131,6 +3563,18 @@ Options.AttackDough:OnChanged(refresh)
 Options.SummonSoulReaper:OnChanged(refresh)
 Options.KillSoulReaper:OnChanged(refresh)
 Options.AutoDough:OnChanged(refresh)
+if Options.AutoFactory then Options.AutoFactory:OnChanged(refresh) end
+if Options.AttackDarkbeard then Options.AttackDarkbeard:OnChanged(refresh) end
+if Options.AutoGhoul then
+    Options.AutoGhoul:OnChanged(function(value)
+        if not value then
+            pcall(function()
+                if isfile and delfile and isfile(K.GHOUL_FILE) then delfile(K.GHOUL_FILE) end
+            end)
+        end
+        refresh()
+    end)
+end
 
 local function playerNames()
     local list = {}
@@ -3141,6 +3585,7 @@ local function playerNames()
     return list
 end
 
+if not InSea2 then
 RaidTab:AddDropdown("RaidChip", {
     Title = "Chip da Raid",
     Values = RaidTypes,
@@ -3250,6 +3695,7 @@ MultiRaidSection:AddDropdown("RaidGuestSlot", {
 }):OnChanged(function(value)
     RaidCfg.GuestSlot = tonumber(value) or 1
 end)
+end
 
 Player.Idled:Connect(function()
     VirtualUser:CaptureController()
@@ -3278,5 +3724,102 @@ Instance.new("UICorner", Button).CornerRadius = UDim.new(1, 0)
 Button.MouseButton1Click:Connect(function()
     Window:Minimize()
 end)
+
+-- Save Settings / Reset Settings
+do
+    local HttpService = game:GetService("HttpService")
+    local SAVE_FILE = "BatmanHub_Settings.json"
+    local SKIP = { RaidPlayers = true } -- lista de jogadores muda a cada servidor
+
+    local function copyValue(v)
+        if type(v) ~= "table" then return v end
+        local c = {}
+        for k, x in pairs(v) do c[k] = x end
+        return c
+    end
+
+    -- valores de fabrica = o que cada opcao tem agora, antes de carregar qualquer save
+    local Defaults = {}
+    for name, opt in pairs(Options) do
+        if not SKIP[name] and not opt.Stub and opt.Value ~= nil then
+            Defaults[name] = copyValue(opt.Value)
+        end
+    end
+
+    local function applyValues(values)
+        for name, v in pairs(values) do
+            local opt = Options[name]
+            local valid = opt ~= nil and Defaults[name] ~= nil
+            if valid and type(v) == "string" and type(opt.Values) == "table" and not table.find(opt.Values, v) then
+                valid = false
+            end
+            if valid then
+                pcall(function() opt:SetValue(copyValue(v)) end)
+            end
+        end
+    end
+
+    local function saveSettings()
+        if not writefile then
+            notify("Settings", "Este executor nao suporta salvar arquivos", 5)
+            return
+        end
+        local data = {}
+        if isfile and readfile and isfile(SAVE_FILE) then
+            local okOld, old = pcall(function()
+                return HttpService:JSONDecode(readfile(SAVE_FILE))
+            end)
+            if okOld and type(old) == "table" then data = old end
+        end
+        for name in pairs(Defaults) do
+            data[name] = copyValue(Options[name].Value)
+        end
+        local ok, err = pcall(function()
+            writefile(SAVE_FILE, HttpService:JSONEncode(data))
+        end)
+        if ok then
+            notify("Settings", "Configuracoes salvas!", 3)
+        else
+            notify("Settings", "Erro ao salvar: " .. short(err), 5)
+        end
+    end
+
+    local function loadSettings()
+        if not (isfile and readfile and isfile(SAVE_FILE)) then return end
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(readfile(SAVE_FILE))
+        end)
+        if ok and type(data) == "table" then
+            applyValues(data)
+        end
+    end
+
+    local function resetSettings()
+        applyValues(Defaults)
+        if isfile and delfile then
+            pcall(function()
+                if isfile(SAVE_FILE) then delfile(SAVE_FILE) end
+            end)
+        end
+        notify("Settings", "Configuracoes de fabrica restauradas!", 3)
+    end
+
+    Settings:AddButton({
+        Title = "Save Settings",
+        Callback = saveSettings,
+    })
+
+    Settings:AddButton({
+        Title = "Reset Settings",
+        Callback = resetSettings,
+    })
+
+    loadSettings()
+end
+
+-- depois de trocar de server, continua o Auto Ghoul se ele estava ligado
+if InSea2 and Options.AutoGhoul and isfile and isfile(K.GHOUL_FILE) then
+    pcall(function() Options.AutoGhoul:SetValue(true) end)
+end
 
 Window:SelectTab(1)
