@@ -117,6 +117,12 @@ K.GHOUL_FILE = "BatmanHub_Ghoul.json"
 K.GHOUL_ECTO = 100
 K.GHOUL_LEVEL = 1000
 
+-- API Quantum Onyx: servers onde o Cursed Captain foi reportado
+K.API_URL = "https://api.quantumonyx.cc"
+K.API_ENDPOINT = "/api/logs/cursedcaptain"
+K.API_SECRET = "QnTmOnyX"
+K.API_ALPHABET = "kQ9mZ2xW7nR4vB1jY6tF3hD8pL5cG0sA"
+
 K.ISLAND_NAMES = {
     "Haunted Castle", "Tiki Outpost", "Castle On The Sea", "Mansion", "Hydra Island",
     "Port Town", "Great Tree", "Cake Land", "Chocolate Land",
@@ -2800,7 +2806,8 @@ end
 
 -- Auto Get Ghoul Race Fully: capitao -> (tocha) -> ectoplasma -> Experimic
 local Ghoul = { phase = nil, ecto = 0, ectoKnown = false, lastInv = -100, probeAt = 0, lastBuy = -100,
-    lastHop = -100, lastCaptainSeen = 0, since = os.clock(), warnedLevel = false }
+    lastHop = -100, lastCaptainSeen = 0, since = os.clock(), warnedLevel = false,
+    tried = {}, lastApiWarn = -100 }
 
 function Ghoul.hasTorch()
     for _, container in ipairs({ Player.Backpack, Player.Character }) do
@@ -2903,7 +2910,77 @@ function Ghoul.buy()
     end
 end
 
--- troca de server pelo __ServerBrowser do jogo: consulta as paginas 1 a 100 e entra no primeiro com vaga
+-- funcao de request do executor (varia entre Synapse, Fluxus, Delta, Hydrogen etc.)
+function Ghoul.request()
+    return (syn and syn.request) or http_request or (http and http.request) or request or httprequest
+end
+
+-- decodifica o jobId devolvido pela API Quantum Onyx
+function Ghoul.decodeJobId(raw)
+    local secret, alphabet = K.API_SECRET, K.API_ALPHABET
+    local s = tostring(raw):gsub("^%.", "")
+    s = s:gsub("%.$", "")
+
+    -- descarta cada 5o caractere (ruido)
+    local kept = {}
+    for i = 1, #s do
+        if i % 5 ~= 0 then table.insert(kept, s:sub(i, i)) end
+    end
+    local str = table.concat(kept)
+
+    local function unmix(a, b)
+        return (a - secret:byte((b - 1) % #secret + 1) - b) % 32
+    end
+
+    local out, idx = {}, 1
+    for pos = 1, #str - 1, 2 do
+        local a = alphabet:find(str:sub(pos, pos), 1, true)
+        local b = alphabet:find(str:sub(pos + 1, pos + 1), 1, true)
+        if not (a and b) then return nil end
+        table.insert(out, string.char(unmix(a - 1, idx) + unmix(b - 1, idx + 100) * 32))
+        idx += 1
+    end
+    return table.concat(out)
+end
+
+-- busca na API os servers onde o Cursed Captain foi reportado (mais recentes primeiro)
+function Ghoul.fetchServers()
+    local req = Ghoul.request()
+    if not req then return nil, "executor sem funcao de request" end
+
+    local ok, res = pcall(req, {
+        Url = K.API_URL .. K.API_ENDPOINT,
+        Method = "GET",
+        Headers = { ["Content-Type"] = "application/json" },
+    })
+    if not ok or type(res) ~= "table" or res.StatusCode ~= 200 then
+        return nil, "falha ao consultar a API"
+    end
+
+    local okJ, data = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(res.Body)
+    end)
+    local entries = okJ and type(data) == "table" and data.cursedcaptain
+    if type(entries) ~= "table" or #entries == 0 then
+        return nil, "nenhum report recente do Cursed Captain"
+    end
+
+    local jobs = {}
+    for i = #entries, 1, -1 do
+        local entry = entries[i]
+        if type(entry) == "table" and entry.jobId and entry.jobId ~= ""
+            and (not entry.placeId or tostring(entry.placeId) == tostring(game.PlaceId)) then
+            local okD, jobId = pcall(Ghoul.decodeJobId, entry.jobId)
+            if okD and jobId and jobId ~= "" and jobId ~= game.JobId and not table.find(jobs, jobId) then
+                table.insert(jobs, jobId)
+            end
+        end
+    end
+    if #jobs == 0 then return nil, "nenhum server valido na API" end
+    return jobs
+end
+
+-- troca de server usando a API: entra nos servers que tem o Cursed Captain
 function Ghoul.hop()
     if Ghoul.hopping or os.clock() - Ghoul.lastHop < 15 then return end
     Ghoul.hopping = true
@@ -2915,15 +2992,6 @@ function Ghoul.hop()
     end)
 
     task.spawn(function()
-        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-        local browser = (remotes and remotes:FindFirstChild("__ServerBrowser"))
-            or ReplicatedStorage:FindFirstChild("__ServerBrowser", true)
-        if not browser then
-            notify("Ghoul Race", "__ServerBrowser nao encontrado", 6)
-            Ghoul.hopping = false
-            return
-        end
-
         -- cancela se desligou o Auto Ghoul ou se a tocha dropou (ela se perde ao sair do server)
         local function cancelled()
             return not (Options.AutoGhoul and Options.AutoGhoul.Value)
@@ -2931,32 +2999,59 @@ function Ghoul.hop()
                 or Ghoul.hasTorch()
         end
 
-        local found = false
-        for i = 1, 100 do
-            if found or cancelled() then break end
-            task.spawn(function()
-                if found or cancelled() then return end
-                local ok, result = pcall(function()
-                    return browser:InvokeServer(i)
-                end)
-                if ok and type(result) == "table" then
-                    for k, v in pairs(result) do
-                        if not found and not cancelled()
-                            and type(v) == "table" and v.Count and v.Count < 12 and k ~= game.JobId then
-                            found = true
-                            notify("Server Hop", "Server found! Teleporting...", 5)
-                            pcall(function()
-                                if not cancelled() then
-                                    browser:InvokeServer("teleport", k)
-                                end
-                            end)
-                        end
-                    end
-                end
-            end)
+        local jobs, err = Ghoul.fetchServers()
+        if not jobs then
+            if os.clock() - Ghoul.lastApiWarn > 30 then
+                Ghoul.lastApiWarn = os.clock()
+                notify("Ghoul Race", "API: " .. tostring(err), 6)
+            end
+            Ghoul.hopping = false
+            return
         end
 
-        task.wait(10)
+        -- pula servers ja tentados (cheios ou que falharam); se todos foram, recomeca a lista
+        local fresh = {}
+        for _, jobId in ipairs(jobs) do
+            if not Ghoul.tried[jobId] then table.insert(fresh, jobId) end
+        end
+        if #fresh == 0 then
+            Ghoul.tried = {}
+            fresh = jobs
+        end
+
+        local currentJob = game.JobId
+        local TeleportService = game:GetService("TeleportService")
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        local browser = (remotes and remotes:FindFirstChild("__ServerBrowser"))
+            or ReplicatedStorage:FindFirstChild("__ServerBrowser", true)
+
+        for i, jobId in ipairs(fresh) do
+            if cancelled() or game.JobId ~= currentJob then break end
+            Ghoul.tried[jobId] = true
+            notify("Server Hop", "Cursed Captain: tentando server " .. i .. "/" .. #fresh, 3)
+
+            local failed = false
+            local conn = TeleportService.TeleportInitFailed:Connect(function() failed = true end)
+
+            pcall(function()
+                if browser then
+                    browser:InvokeServer("teleport", jobId)
+                else
+                    TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, Player)
+                end
+            end)
+
+            -- espera ate 6s o teleporte acontecer
+            local t0 = os.clock()
+            while os.clock() - t0 < 6 and game.JobId == currentJob and not cancelled() do
+                task.wait(0.2)
+            end
+            conn:Disconnect()
+
+            if game.JobId ~= currentJob then break end
+            if failed then task.wait(0.8) end
+        end
+
         Ghoul.hopping = false
     end)
 end
@@ -3090,13 +3185,13 @@ local function step()
             handleStackBoss(captain, captainInWorld)
             return
         end
-        -- sem capitao: espera 3s (carregar / dropar) e troca de server
+        -- sem capitao: espera 3s (carregar / dropar) e troca de server pela API
         hover(true)
         clearGroup()
         attackFocus = nil
         target = nil
         if os.clock() - math.max(Ghoul.since, Ghoul.lastCaptainSeen, lastShipEnter) > 3 then
-            Stats.State = "Ghoul: trocando de server"
+            Stats.State = "Ghoul: trocando de server (API)"
             Ghoul.hop()
         else
             Stats.State = "Ghoul: procurando Cursed Captain"
