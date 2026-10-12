@@ -124,7 +124,6 @@ K.METHODS["Ectoplasm"] = {
     },
 }
 K.FACTORY_BOSS = { "Core" }
-K.FACTORY_CF = CFrame.new(448.46756, 199.356781, -441.389252)
 K.DARKBEARD = { "Darkbeard" }
 K.CURSED_CAPTAIN = { "Cursed Captain" }
 K.GHOUL_FILE = "BatmanHub_Ghoul.json"
@@ -172,6 +171,15 @@ if InSea2 then
         ["Remote Island"] = Vector3.new(4816, 8, 2863),
     }
 end
+
+-- bosses que nascem naturalmente, por sea (Boss Farm)
+K.BOSS_FARM_LIST = InSea2 and {
+    "Diamond", "Jeremy", "Fajita", "Don Swan", "Smoke Admiral",
+    "Awakened Ice Admiral", "Tide Keeper", "Cursed Captain",
+} or {
+    "Stone", "Island Empress", "Kilo Admiral", "Captain Elephant", "Beautiful Pirate",
+    "Cake Queen", "Longma", "Tyrant of the Skies",
+}
 
 K.BRING_RANGE = 300
 K.HOVER_HEIGHT = 20
@@ -238,51 +246,6 @@ local RaidCfg = {
     SlotRadius = 8,
 }
 
-local SeaCfg = {
-    Auto = false,
-    Boat = "Guardian",
-    Farm = {},
-    Level = 1,
-    Levels = {
-        [1] = CFrame.new(-21998.375, 30.0006, -682.309),
-        [2] = CFrame.new(-26779.5215, 30.0005, -822.858),
-        [3] = CFrame.new(-31171.957, 30.0001, -2256.9377),
-        [4] = CFrame.new(-34054.6875, 30.2187, -2560.1201),
-        [5] = CFrame.new(-38887.5547, 30.0004, -2162.9902),
-        [6] = CFrame.new(-44541.7617, 30.0003, -1244.8584),
-    },
-    SkillHold = false,
-    DealerCFrame = CFrame.new(-16923.447265625, 9.391397476196289, 434.3277282714844),
-    Range = 1500,
-    MaxBoatDist = 2500,
-    needNewBoat = false,
-    hadBoat = false,
-    atSea = false,
-    lastBoatPos = nil,
-    dodge = nil,
-    terrorNear = false,
-    beastPart = nil,
-    beastDodging = false,
-    -- altura minima do personagem acima da superficie do mar enquanto ataca o Sea Beast
-    -- (o Sea Beast mergulha, entao a posicao dele + altura pode ficar debaixo da agua)
-    BeastMinAbove = 150,
-    surfaceY = 30,
-    extra = {},
-    extraT = 0,
-    lastBuy = 0,
-    lastSkill = 0,
-    lastSit = 0,
-    -- referencia: barco anda pelo VehicleSeat numa altura fixa, e flutua alto durante o combate
-    BoatPosY = 31,
-    BoatSpeed = 230,
-    ProtectBoat = true,
-    ProtectY = 450,
-    boatGoal = nil,
-    boatGoalT = 0,
-    wantSit = false,
-}
-
--- CORRIGIDO: campo "text" guarda a ultima resposta do CakePrinceSpawner (usado na fase Dough King)
 local Kat = { lastIdleQuery = 0, remaining = nil, needCheck = true, blockUntil = 0, mode = nil, lastN = nil, bossSeen = false, text = nil }
 
 local Dough = { phase = nil, cocoa = 0, cocoaKnown = false, invGod = false, invSweet = false, lastInv = -100, lastCraft = -100, probeAt = 0, lastNotify = -100 }
@@ -611,56 +574,90 @@ function Aim.install()
     if not ok then Aim.hooked = false end
 end
 
+local lastFruitClick = 0
+K.FRUIT_CLICK_DELAY = 0.3
+K.FRUIT_GRACE = 1.2
+local lastFocusEnemy, lastFocusT = nil, 0
+K.FRUIT_RANGE = 220
+
 local function fastAttack()
-    if SeaCfg.SkillHold then return end
     local char = Player.Character
     local hrp = root()
     if not (char and hrp) then return end
 
-    Aim.fruitPos, Aim.fruitPart = nil, nil
+    local weapon = selectedWeapon()
+    local fruitMode = weapon == "Fruit(M1)"
+
+    if not fruitMode then Aim.fruitPos, Aim.fruitPart = nil, nil end
     equipWeapon()
 
-    local targets = {}
+    local range = fruitMode and K.FRUIT_RANGE or 60
+    local focusEnemy = alive(attackFocus) and attackFocus or nil
+    if focusEnemy then
+        lastFocusEnemy, lastFocusT = focusEnemy, os.clock()
+    elseif fruitMode and alive(lastFocusEnemy) and os.clock() - lastFocusT < K.FRUIT_GRACE then
+        -- o foco sumiu por um instante (troca de alvo/bring): continua batendo no ultimo alvo
+        focusEnemy = lastFocusEnemy
+    end
+
+    -- alvos: o foco vem primeiro, depois os mais proximos
+    local enemies = {}
     for _, enemy in ipairs(Workspace.Enemies:GetChildren()) do
         local eRoot = enemy:FindFirstChild("HumanoidRootPart")
         local eHum = enemy:FindFirstChildOfClass("Humanoid")
-        if eRoot and eHum and eHum.Health > 0 and (eRoot.Position - hrp.Position).Magnitude <= 60 then
-            for _, part in ipairs(enemy:GetChildren()) do
+        if eRoot and eHum and eHum.Health > 0 then
+            local d = (eRoot.Position - hrp.Position).Magnitude
+            if d <= range then
+                table.insert(enemies, { enemy, enemy == focusEnemy and -1 or d })
+            end
+        end
+    end
+    if #enemies == 0 then
+        Aim.fruitPos, Aim.fruitPart = nil, nil
+        return
+    end
+    table.sort(enemies, function(a, b) return a[2] < b[2] end)
+
+    local targets = {}
+    for _, entry in ipairs(enemies) do
+        if entry[2] <= 60 then
+            for _, part in ipairs(entry[1]:GetChildren()) do
                 if part:IsA("BasePart") then
-                    table.insert(targets, { enemy, part })
+                    table.insert(targets, { entry[1], part })
                 end
             end
         end
     end
-    local focusModel = attackFocus
-    if SeaCfg.Auto and focusModel and focusModel.Parent ~= Workspace.Enemies then
-        local fRoot = focusModel:FindFirstChild("HumanoidRootPart") or focusModel.PrimaryPart
-        local fHum = focusModel:FindFirstChildOfClass("Humanoid")
-        if fRoot and (not fHum or fHum.Health > 0) and (fRoot.Position - hrp.Position).Magnitude <= 60 then
-            for _, part in ipairs(focusModel:GetChildren()) do
-                if part:IsA("BasePart") then
-                    table.insert(targets, { focusModel, part })
-                end
-            end
-        end
-    end
-    if #targets == 0 then return end
 
     local tool = char:FindFirstChildOfClass("Tool")
     if not tool then return end
-    local weapon = selectedWeapon()
 
-    if weapon == "Fruit(M1)" then
-        local focus = alive(attackFocus) and attackFocus or targets[1][1]
+    if fruitMode then
+        if not isFruit(tool) then return end
+        local focus = enemies[1][1]
         local focusRoot = focus.HumanoidRootPart
+
+        -- mira com antecipacao leve do movimento do inimigo
+        local aimPos = focusRoot.Position + focusRoot.AssemblyLinearVelocity * 0.08
         Aim.install()
-        Aim.fruitPos, Aim.fruitPart = focusRoot.Position, focusRoot
+        Aim.fruitPos, Aim.fruitPart = aimPos, focusRoot
+
+        if os.clock() - lastFruitClick < K.FRUIT_CLICK_DELAY then return end
+
         local remote = tool:FindFirstChild("LeftClickRemote")
-        if not isFruit(tool) or not remote then return end
-        local direction = focusRoot.Position - hrp.Position
+        if not remote then
+            pcall(function() tool:Activate() end)
+            return
+        end
+        lastFruitClick = os.clock()
+
+        local direction = aimPos - hrp.Position
         remote:FireServer(direction.Magnitude > 0 and direction.Unit or hrp.CFrame.LookVector, 1)
-    elseif tool:GetAttribute("WeaponType") ~= weapon then
-        return
+
+        if #targets == 0 then return end
+    else
+        if #targets == 0 then return end
+        if tool:GetAttribute("WeaponType") ~= weapon then return end
     end
 
     if okNet then netModule:RemoteEvent("RegisterHit", true) end
@@ -759,6 +756,8 @@ local function castleEnemies()
     return list
 end
 
+local castleArrived = false
+
 local function raidActive()
     local now = os.clock()
     if #castleEnemies() > 0 then
@@ -770,15 +769,33 @@ local function raidActive()
         if now - raidLastSeen > K.RAID_END_IDLE then
             raidSawEnemies = false
             raidUntil = 0
+            castleArrived = false
             return false
         end
         return true
     end
-    return now < raidUntil
+    if now < raidUntil then return true end
+    castleArrived = false
+    return false
 end
 
 local function handleRaid()
     clearGroup()
+
+    -- primeiro chega no Castelo do Mar; so depois comeca a atacar
+    if not castleArrived then
+        local hrp = root()
+        local goal = K.CASTLE_POS + Vector3.new(0, 30, 0)
+        attackFocus = nil
+        target = CFrame.new(goal)
+        Stats.State = "Pirate Raid: indo ao castelo"
+        if hrp and (hrp.Position - goal).Magnitude <= 100 then
+            castleArrived = true
+        end
+        return
+    end
+
+    Stats.State = "Pirate Raid"
     local list = castleEnemies()
     if #list > 0 then
         local enemy = list[1][1]
@@ -927,7 +944,6 @@ function Dough.update()
         if sweet then
             phase = "kill"
         elseif god then
-            -- se o inventario nao mostra cocoa nenhum, tenta craftar mesmo assim de tempos em tempos
             if Dough.cocoa >= K.COCOA_NEEDED or (not Dough.cocoaKnown and os.clock() >= Dough.probeAt) then
                 phase = "craft"
             else
@@ -939,7 +955,7 @@ function Dough.update()
         Dough.phase = phase
         questId = nil
         Kat.needCheck, Kat.remaining = true, nil
-        Kat.text = nil -- CORRIGIDO: zera o texto ao trocar de fase
+        Kat.text = nil
         clearGroup()
         attackFocus = nil
     end
@@ -993,7 +1009,7 @@ function Dough.craft()
     end
 end
 
--- CORRIGIDO: na fase kill so procura o Dough King (ignora Katakuri / Cake Prince)
+-- na fase kill so procura o Dough King (ignora Katakuri / Cake Prince)
 local function findBoss()
     local names = K.BOSS_NAMES
     if Dough.phase == "kill" then names = { "Dough King" } end
@@ -1008,7 +1024,7 @@ local function applyCountText(res)
     local text = res ~= nil and tostring(res) or ""
     if text == "" or text == "false" or text == "nil" or text == "true" then return end
 
-    Kat.text = text:lower() -- CORRIGIDO: guarda a mensagem do servidor
+    Kat.text = text:lower()
 
     local nums = {}
     for d in text:gmatch("%d+") do table.insert(nums, tonumber(d)) end
@@ -1051,7 +1067,7 @@ local function applyCountText(res)
     end
 end
 
--- CORRIGIDO: na fase kill (Dough King) consulta sem o argumento true, como no codigo de referencia
+-- na fase kill (Dough King) consulta sem o argumento true
 local function queryCount()
     local ok, res
     if Dough.phase == "kill" then
@@ -1110,7 +1126,7 @@ local function summonBoss()
     return false
 end
 
--- CORRIGIDO: fase Dough King so invoca quando o servidor disser "open the portal now"
+-- fase Dough King so invoca quando o servidor disser "open the portal now"
 local function katakuri()
     local hrp = root()
     if not hrp then return true end
@@ -1149,10 +1165,10 @@ local function katakuri()
             Kat.blockUntil = os.clock() + 5
             return true
         end
-        return false -- continua atacando os mobs de bolo ate liberar o portal
+        return false
     end
 
-    -- FASE KATAKURI NORMAL (V1), inalterada
+    -- FASE KATAKURI NORMAL
     if Kat.needCheck then
         clearGroup()
         attackFocus = nil
@@ -1254,44 +1270,36 @@ end)
 
 task.spawn(function()
     local function spin()
-        local gacha = Net:FindFirstChild("RF/GachaNetworkRF")
-        if not gacha then return end
-        pcall(function()
-            gacha:InvokeServer({
+        local ok, res = pcall(function()
+            local Event = game:GetService("ReplicatedStorage").Modules.Net["RF/GachaNetworkRF"]
+            return Event:InvokeServer({
                 Context = "Purchase",
-                BoxName = "ZiolesGacha",
+                BoxName = "ZiolesGacha"
             })
         end)
+        return ok, res
     end
 
     while true do
         local delay = 1
         if Options.RandomFruit and Options.RandomFruit.Value then
-            -- so gira quando o jogo diz que esta liberado; em cooldown espera e checa de novo
             local okCheck, ready = commF("Cousin", "CheckTime", "DLCBoxData")
-            if okCheck and ready == true then
-                spin()
-                delay = 3
-            elseif okCheck then
+            if okCheck and ready == false then
                 delay = 10
             else
-                -- nao deu para checar o tempo: tenta girar, mas devagar
                 spin()
-                delay = 30
+                delay = 3
             end
 
-            -- fecha o menu do spinner
-            local spinnerWindow = Player.PlayerGui:FindFirstChild("SpinnerWindow")
-            if spinnerWindow then
-                local above = spinnerWindow:FindFirstChild("AboveSpinner")
+            pcall(function()
+                local spinnerWindow = Player.PlayerGui:FindFirstChild("SpinnerWindow")
+                local above = spinnerWindow and spinnerWindow:FindFirstChild("AboveSpinner")
                 local nav = above and above:FindFirstChild("Navigation")
                 local closeButton = nav and nav:FindFirstChild("CloseButton")
                 if closeButton and closeButton.Visible and firesignal then
-                    pcall(function()
-                        firesignal(closeButton.Activated)
-                    end)
+                    firesignal(closeButton.Activated)
                 end
-            end
+            end)
         end
         task.wait(delay)
     end
@@ -1463,12 +1471,29 @@ local function farFromLobby()
     return hrp ~= nil and (hrp.Position - lobbyPos()).Magnitude > 600
 end
 
+local RaidFighting = false
+local RaidGuiSeen, RaidGuiLostAt = false, nil
+
+-- dentro da raid: se o timer da raid ja apareceu, so ele vale (com 3s de tolerancia);
+-- se nunca apareceu, usa a distancia do lobby como reserva
+local function raidInside()
+    if raidGui() then
+        RaidGuiSeen, RaidGuiLostAt = true, nil
+        return true
+    end
+    if RaidGuiSeen then
+        RaidGuiLostAt = RaidGuiLostAt or os.clock()
+        return os.clock() - RaidGuiLostAt < 3
+    end
+    return farFromLobby()
+end
+
 local function inRaidNow()
     if os.clock() < RaidRespawnBlockUntil then return false end
     return raidGui() or (RaidArmed and farFromLobby())
 end
 
--- ilha mais perto (até 2500 studs), parte da ilha seguinte e parte da ilha atual
+-- ilha mais perto (ate 2500 studs), parte da ilha seguinte e parte da ilha atual
 local function raidIslandInfo()
     local hrp = root()
     if not hrp then return nil, nil, nil end
@@ -1540,6 +1565,8 @@ local function raidFight(graceSeconds)
     local graceUntil = os.clock() + (graceSeconds or 0)
     local lastInside = os.clock()
     local idleSince, sawEnemy = nil, false
+    RaidFighting = true
+    RaidGuiSeen, RaidGuiLostAt = false, nil
     while farming and multiRaidActive() do
         local char = Player.Character
         local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -1548,7 +1575,7 @@ local function raidFight(graceSeconds)
             break
         end
 
-        if raidGui() or farFromLobby() then
+        if raidInside() then
             lastInside = os.clock()
             graceUntil = 0
             local hrp = root()
@@ -1595,13 +1622,15 @@ local function raidFight(graceSeconds)
         else
             if os.clock() < graceUntil then
                 task.wait(0.3)
-            elseif os.clock() - lastInside > 6 then
+            elseif RaidGuiSeen or os.clock() - lastInside > 6 then
                 break
             else
                 task.wait(0.3)
             end
         end
     end
+    RaidFighting = false
+    RaidGuiSeen, RaidGuiLostAt = false, nil
     attackFocus = nil
     target = nil
     clearGroup()
@@ -1612,7 +1641,7 @@ local function raidFight(graceSeconds)
     end
 end
 
--- Kill Aura do raid: mata na hora os inimigos a até 600 studs do centro das ilhas 4 e 5
+-- Kill Aura do raid: mata na hora os inimigos a ate 600 studs do centro das ilhas 4 e 5
 local function raidKillAuraStep()
     local cur, _, curPart = raidIslandInfo()
     if not cur or cur < 4 or not curPart then return end
@@ -1634,7 +1663,7 @@ end
 task.spawn(function()
     while true do
         task.wait(0.1)
-        if RaidCfg.KillAura and farming and multiRaidActive() and (raidGui() or farFromLobby()) then
+        if RaidCfg.KillAura and farming and multiRaidActive() and RaidFighting and raidInside() then
             pcall(raidKillAuraStep)
         end
     end
@@ -1649,20 +1678,6 @@ end
 
 local RaidPayFruit = nil
 local lastFruitNotify = -100
-
-local function otherFruitTools()
-    local list = {}
-    for _, c in ipairs({ Player.Backpack, Player.Character }) do
-        if c then
-            for _, t in ipairs(c:GetChildren()) do
-                if t:IsA("Tool") and t.Name:find("Fruit") and t:GetAttribute("OriginalName") ~= RaidPayFruit then
-                    table.insert(list, t)
-                end
-            end
-        end
-    end
-    return list
-end
 
 local function anyFruitTool()
     for _, c in ipairs({ Player.Backpack, Player.Character }) do
@@ -1799,17 +1814,8 @@ local function buyChip()
         end
         if not chipWanted() then return end
 
-        for _, t in ipairs(otherFruitTools()) do
-            pcall(function() CommF:InvokeServer("StoreFruit", t:GetAttribute("OriginalName") or t.Name, t) end)
-        end
-        task.wait(0.5)
-        if #otherFruitTools() > 0 then
-            raidWarn("guarde as frutas da mochila antes (uma fruta cara poderia ser usada no chip)")
-            return
-        end
-
         if not anyFruitTool() then
-            if RaidCfg.AutoUnstore or RaidCfg.AutoBuyChip or (RaidCfg.Multi and RaidCfg.Pay) then
+            if RaidCfg.AutoUnstore or (RaidCfg.Multi and RaidCfg.Pay) then
                 local okU, info = unstoreCheapFruit()
                 Stats.RaidMsg = okU and ("pagando com: " .. info) or info
                 if not okU and os.clock() - lastFruitNotify > 30 then
@@ -2015,7 +2021,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 RunService.Stepped:Connect(function()
-    if not ((farming or traveling) and target and Player.Character) or SeaCfg.wantSit then return end
+    if not ((farming or traveling) and target and Player.Character) then return end
     for _, part in ipairs(Player.Character:GetDescendants()) do
         if part:IsA("BasePart") then
             part.CanCollide = false
@@ -2027,7 +2033,8 @@ task.spawn(function()
     while true do
         task.wait(0.01)
         local autoClick = Options.AutoClick and Options.AutoClick.Value and selectedWeapon() ~= "Fruit(M1)"
-        if (farming and not traveling and attackFocus) or autoClick then
+        local fruitGrace = selectedWeapon() == "Fruit(M1)" and os.clock() - lastFocusT < K.FRUIT_GRACE
+        if (farming and not traveling and (attackFocus or fruitGrace)) or autoClick then
             local ok, err = pcall(fastAttack)
             if not ok then warn("[Batman Hub] fastAttack: " .. tostring(err)) end
         else
@@ -2043,583 +2050,6 @@ local function idle()
     hover(false)
     lastMode = "idle"
     Stats.State = "Idle"
-end
-
-do
-local VirtualInputManager = game:GetService("VirtualInputManager")
-
-local function seaFarmSelected(name)
-    return SeaCfg.Farm[name] == true
-end
-
-local function ownedBoat(ignoreFar)
-    local boats = Workspace:FindFirstChild("Boats")
-    local playerRoot = root()
-    for _, boat in ipairs(boats and boats:GetChildren() or {}) do
-        if boat.Name == SeaCfg.Boat then
-            local owner = boat:FindFirstChild("Owner")
-            local value = owner and owner.Value
-            if value == Player or tostring(value) == Player.Name then
-                local seat = boat:FindFirstChild("VehicleSeat") or boat:FindFirstChildWhichIsA("VehicleSeat", true)
-                local hp = boat:FindFirstChild("Humanoid")
-                local dead = (hp ~= nil and hp:IsA("ValueBase") and hp.Value == 0)
-                    or (hp ~= nil and hp:IsA("Humanoid") and hp.Health <= 0)
-                    or boat:GetAttribute("Dead") == true
-                    or boat:GetAttribute("Sunk") == true
-                    or (seat ~= nil and seat.Position.Y < -15)
-                if seat and not dead then
-                    local tooFar = ignoreFar and playerRoot
-                        and (seat.Position - playerRoot.Position).Magnitude > SeaCfg.MaxBoatDist
-                    if not tooFar then return boat, seat end
-                end
-            end
-        end
-    end
-end
-
-local function buyBoat()
-    if os.clock() - SeaCfg.lastBuy < 5 then return end
-    SeaCfg.lastBuy = os.clock()
-    Stats.State = "Buy Boat"
-    flyAndWait(SeaCfg.DealerCFrame, 60, function() return not SeaCfg.Auto end)
-    if not SeaCfg.Auto then return end
-    target = nil
-    commF("BuyBoat", SeaCfg.Boat)
-    waitFor(function() return ownedBoat(SeaCfg.needNewBoat) end, 6)
-end
-
-local function sitOnBoat(seat)
-    local char = Player.Character
-    local hrp = root()
-    local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-    if not (hrp and humanoid) then return false end
-    if humanoid.SeatPart == seat then return true end
-    if os.clock() - SeaCfg.lastSit < 1.5 then return false end
-    SeaCfg.lastSit = os.clock()
-    target = nil
-    hrp.CFrame = seat.CFrame * CFrame.new(0, 2, 0)
-    task.wait(0.4)
-    return humanoid.SeatPart == seat
-end
-
-local function seaKind(name, fromBeasts)
-    local lower = name:lower()
-    if lower:find("terror", 1, true) then return "Terror Shark" end
-    if lower:find("piranha", 1, true) then return "Piranha" end
-    if name == "Shark" then return "Shark" end
-    if fromBeasts then return "Sea Beast" end
-end
-
-local function modelPart(model)
-    return model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-end
-
--- Terror Shark / Shark / Piranha may live outside workspace.Enemies, so also scan top-level folders
-local function extraScan()
-    if os.clock() - SeaCfg.extraT < 1.5 then return SeaCfg.extra end
-    SeaCfg.extraT = os.clock()
-    local found = {}
-    local function check(model)
-        if model:IsA("Model") and seaKind(model.Name, false) then table.insert(found, model) end
-    end
-    for _, child in ipairs(Workspace:GetChildren()) do
-        if child:IsA("Model") then
-            check(child)
-        elseif child:IsA("Folder") and child.Name ~= "Map" and child.Name ~= "Boats" then
-            for _, inner in ipairs(child:GetChildren()) do check(inner) end
-        end
-    end
-    SeaCfg.extra = found
-    return found
-end
-
-local function seaMobs()
-    local list, seen = {}, {}
-    local hrp = root()
-    if not hrp then return list end
-
-    local function consider(model, fromBeasts)
-        if seen[model] or not model:IsA("Model") then return end
-        local kind = seaKind(model.Name, fromBeasts)
-        if not kind or not seaFarmSelected(kind) then return end
-        local part = modelPart(model)
-        if not part then return end
-        local humanoid = model:FindFirstChildOfClass("Humanoid")
-        if humanoid and humanoid.Health <= 0 then return end
-        local d = (part.Position - hrp.Position).Magnitude
-        if d > SeaCfg.Range then return end
-        seen[model] = true
-        table.insert(list, { model = model, part = part, dist = d, beast = kind == "Sea Beast", terror = kind == "Terror Shark" })
-    end
-
-    for _, model in ipairs(Workspace.Enemies:GetChildren()) do consider(model, false) end
-    local beasts = Workspace:FindFirstChild("SeaBeasts")
-    for _, model in ipairs(beasts and beasts:GetChildren() or {}) do consider(model, true) end
-    for _, model in ipairs(extraScan()) do consider(model, false) end
-
-    table.sort(list, function(x, y) return x.dist < y.dist end)
-    return list
-end
-
-local function terrorDodge()
-    local origin = Workspace:FindFirstChild("_WorldOrigin")
-    for _, child in ipairs(origin and origin:GetChildren() or {}) do
-        local name = child.Name:lower()
-        if name:find("sharkslam", 1, true) or name:find("spin", 1, true) or name:find("chargemodel", 1, true) then
-            return true
-        end
-    end
-    return false
-end
-
-local function unselectedSea()
-    local hrp = root()
-    if not hrp then return false end
-
-    local function near(part)
-        local dx = part.Position.X - hrp.Position.X
-        local dz = part.Position.Z - hrp.Position.Z
-        return math.sqrt(dx * dx + dz * dz) <= SeaCfg.Range
-    end
-
-    local function check(model, fromBeasts)
-        if not model:IsA("Model") then return false end
-        local kind = seaKind(model.Name, fromBeasts)
-        if not kind or seaFarmSelected(kind) then return false end
-        local part = modelPart(model)
-        local humanoid = model:FindFirstChildOfClass("Humanoid")
-        return part ~= nil and (not humanoid or humanoid.Health > 0) and near(part)
-    end
-
-    for _, model in ipairs(Workspace.Enemies:GetChildren()) do
-        if check(model, false) then return true end
-    end
-    local beasts = Workspace:FindFirstChild("SeaBeasts")
-    for _, model in ipairs(beasts and beasts:GetChildren() or {}) do
-        if check(model, true) then return true end
-    end
-    for _, model in ipairs(extraScan()) do
-        if check(model, false) then return true end
-    end
-
-    -- boats that do not belong to any player (event ships)
-    local boats = Workspace:FindFirstChild("Boats")
-    for _, boat in ipairs(boats and boats:GetChildren() or {}) do
-        local owner = boat:FindFirstChild("Owner")
-        if not (owner and owner.Value) then
-            local part = modelPart(boat)
-            if part and near(part) then return true end
-        end
-    end
-    return false
-end
-
-RunService.Heartbeat:Connect(function()
-    if not SeaCfg.Auto then return end
-    local hrp = root()
-    if not hrp then return end
-
-    local dodge = SeaCfg.dodge
-    if dodge then
-        local now = os.clock()
-        if now - dodge.t0 >= 1 or now >= dodge.maxT then
-            hrp.CFrame = dodge.back
-            target = dodge.back
-            SeaCfg.dodge = nil
-        end
-        return
-    end
-
-    if not SeaCfg.terrorNear then return end
-    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.SeatPart then return end
-    if terrorDodge() then
-        Stats.State = "Dodging Terror Shark"
-        local now = os.clock()
-        SeaCfg.dodge = { back = hrp.CFrame, t0 = now, maxT = now + 10 }
-        attackFocus = nil
-        hrp.CFrame = hrp.CFrame + Vector3.new(0, 250, 0)
-        target = hrp.CFrame
-    end
-end)
-
--- approximation of IsEntityAttacking: any non-looping animation playing on the entity
-function SeaCfg.isAttacking(model)
-    local ok, result = pcall(function()
-        local humanoid = model:FindFirstChildOfClass("Humanoid")
-        local animator = (humanoid and humanoid:FindFirstChildOfClass("Animator"))
-            or model:FindFirstChildWhichIsA("Animator", true)
-        if animator then
-            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                if not track.Looped then return true end
-            end
-        end
-        return false
-    end)
-    return ok and result == true
-end
-
-function SeaCfg.dodgeBeast()
-    local beasts = Workspace:FindFirstChild("SeaBeasts")
-    for _, child in ipairs(beasts and beasts:GetChildren() or {}) do
-        if child:FindFirstChild("HumanoidRootPart") and SeaCfg.isAttacking(child) then
-            return true
-        end
-    end
-
-    local origin = Workspace:FindFirstChild("_WorldOrigin")
-    for _, child in ipairs(origin and origin:GetChildren() or {}) do
-        if child:IsA("BasePart") then
-            local name = child.Name:lower()
-            local flag = name:find("lightbullet", 1, true) or name:find("waterbeam", 1, true) or name:find("beastroar", 1, true)
-            if not flag then
-                flag = child.BrickColor == BrickColor.new("Toothpaste") and child.Size.Magnitude > 15
-            end
-            if flag then return true end
-        end
-    end
-
-    for _, child in ipairs(Workspace:GetChildren()) do
-        if child:IsA("BasePart") then
-            local name = child.Name:lower()
-            if name:find("waterbeam", 1, true) or name:find("lightbullet", 1, true) then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-RunService.Heartbeat:Connect(function()
-    local part = SeaCfg.beastPart
-    if not (SeaCfg.Auto and part and part.Parent) then
-        SeaCfg.beastDodging = false
-        return
-    end
-    local hrp = root()
-    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
-    if not hrp or not humanoid or humanoid.SeatPart then return end
-
-    -- nunca deixa o personagem ficar debaixo da agua enquanto ataca o Sea Beast
-    local minY = SeaCfg.surfaceY + SeaCfg.BeastMinAbove
-    if hrp.Position.Y < SeaCfg.surfaceY - 5 then
-        hrp.CFrame = CFrame.new(hrp.Position.X, minY, hrp.Position.Z) * hrp.CFrame.Rotation
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        target = hrp.CFrame
-    end
-
-    local dodging = SeaCfg.dodgeBeast()
-    SeaCfg.beastDodging = dodging
-    if dodging then
-        local p = part.Position - part.CFrame.LookVector * 20
-        hrp.CFrame = CFrame.new(p.X, math.max(p.Y + 400, minY), p.Z) * hrp.CFrame.Rotation
-        target = hrp.CFrame
-    end
-end)
-
-K.SKILL_KEYS = { Enum.KeyCode.Z, Enum.KeyCode.X, Enum.KeyCode.C, Enum.KeyCode.V, Enum.KeyCode.F }
-K.TRANSFORM_FRUITS = { "dragon", "leopard", "kitsune", "t-rex", "trex", "yeti", "tiger", "mammoth", "venom", "gas" }
-K.SKILL_TOOLS = { "Melee", "Sword", "Blox Fruit", "Gun" }
-
-local function findToolByTip(tip)
-    local char = Player.Character
-    for _, container in ipairs({ char, Player.Backpack }) do
-        for _, tool in ipairs(container and container:GetChildren() or {}) do
-            if tool:IsA("Tool") and tool.ToolTip == tip then return tool end
-        end
-    end
-end
-
-local function releaseSkills(part)
-    if os.clock() - SeaCfg.lastSkill < 0.3 then return end
-    SeaCfg.lastSkill = os.clock()
-    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    SeaCfg.SkillHold = true
-    Aim.install()
-    for _, tip in ipairs(K.SKILL_TOOLS) do
-        if not (SeaCfg.Auto and part and part.Parent) then break end
-        local tool = findToolByTip(tip)
-        if tool then
-            humanoid:EquipTool(tool)
-            task.wait(0.15)
-            Aim.pos, Aim.part = part.Position, part
-            local skipV = false
-            if tip == "Blox Fruit" then
-                local lower = tool.Name:lower()
-                for _, word in ipairs(K.TRANSFORM_FRUITS) do
-                    if lower:find(word, 1, true) then skipV = true break end
-                end
-            end
-            for _, key in ipairs(K.SKILL_KEYS) do
-                if not (skipV and key == Enum.KeyCode.V) then
-                    VirtualInputManager:SendKeyEvent(true, key, false, game)
-                    task.wait(0.05)
-                    VirtualInputManager:SendKeyEvent(false, key, false, game)
-                    task.wait(0.05)
-                end
-            end
-        end
-    end
-    Aim.pos, Aim.part = nil, nil
-    SeaCfg.SkillHold = false
-end
-
-local function resetCharacter(reason)
-    Stats.State = reason
-    SeaCfg.needNewBoat = true
-    SeaCfg.hadBoat = false
-    target = nil
-    attackFocus = nil
-    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
-    if humanoid then humanoid.Health = 0 end
-    task.wait(1)
-    waitFor(function()
-        local h = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
-        return h and h.Health > 0 and root()
-    end, 15)
-end
-
-local function nearerToDealer(boatPos)
-    local hrp = root()
-    return hrp ~= nil and boatPos ~= nil
-        and (hrp.Position - SeaCfg.DealerCFrame.Position).Magnitude < (hrp.Position - boatPos).Magnitude
-end
-
-local function runSeaEvents()
-    local levelCF = SeaCfg.Levels[SeaCfg.Level]
-    if not levelCF then
-        Stats.State = "Sea: set Danger Level " .. SeaCfg.Level
-        target = nil
-        attackFocus = nil
-        return
-    end
-    SeaCfg.surfaceY = levelCF.Y
-
-    local hrp = root()
-    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
-    if not (hrp and humanoid) then return end
-
-    clearGroup()
-    SeaCfg.beastPart = nil
-    SeaCfg.boatGoal = nil
-    SeaCfg.wantSit = false
-
-    if SeaCfg.dodge then
-        hover(true)
-        attackFocus = nil
-        target = hrp.CFrame
-        return
-    end
-
-    local boatLost = false
-    local boat, seat = ownedBoat(SeaCfg.needNewBoat)
-    if boat then
-        SeaCfg.needNewBoat = false
-        SeaCfg.hadBoat = true
-        SeaCfg.lastBoatPos = seat.Position
-        if (seat.Position - hrp.Position).Magnitude > SeaCfg.MaxBoatDist then
-            if nearerToDealer(seat.Position) then
-                SeaCfg.needNewBoat = true
-                SeaCfg.hadBoat = false
-                attackFocus = nil
-                target = nil
-                buyBoat()
-            else
-                resetCharacter("Boat too far: resetting")
-            end
-            return
-        end
-    else
-        if not SeaCfg.hadBoat then
-            attackFocus = nil
-            buyBoat()
-            return
-        end
-        -- o barco morreu: ainda mata o que estiver por perto e so depois reseta
-        boatLost = true
-    end
-
-    local mobs = seaMobs()
-    local mob = mobs[1]
-    local hasTerror = false
-    for _, m in ipairs(mobs) do
-        if m.terror then hasTerror = true break end
-    end
-    SeaCfg.terrorNear = hasTerror
-
-    if mob then
-        -- Protect Boat: o barco flutua alto enquanto voce luta, para nao tomar dano
-        if boat and seat and SeaCfg.ProtectBoat then
-            local pivot = boat:GetPivot()
-            local py = SeaCfg.ProtectY
-            if pivot.Position.Y < py - 10 then
-                pcall(function()
-                    boat:PivotTo(CFrame.new(pivot.Position.X, py, pivot.Position.Z) * pivot.Rotation)
-                end)
-            end
-            local holdPos = Vector3.new(pivot.Position.X, py, pivot.Position.Z)
-            local bp = seat:FindFirstChild("BoatProtectBP")
-            if not bp then
-                bp = Instance.new("BodyPosition")
-                bp.Name = "BoatProtectBP"
-                bp.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-                bp.P = 100000
-                bp.D = 1000
-                bp.Parent = seat
-            end
-            bp.Position = holdPos
-            local bv = seat:FindFirstChild("BoatProtectBV")
-            if not bv then
-                bv = Instance.new("BodyVelocity")
-                bv.Name = "BoatProtectBV"
-                bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-                bv.P = 100000
-                bv.Parent = seat
-            end
-            bv.Velocity = Vector3.zero
-        end
-
-        if humanoid.SeatPart then
-            Stats.State = "Leaving boat"
-            attackFocus = nil
-            target = nil
-            humanoid.Sit = false
-            humanoid:ChangeState(Enum.HumanoidStateType.Jump)
-            task.wait(0.3)
-            return
-        end
-
-        hover(true)
-        Stats.State = "Sea: " .. mob.model.Name
-        local pos = mob.part.Position
-        if mob.beast then
-            attackFocus = nil
-            SeaCfg.beastPart = mob.part
-            local height = SeaCfg.beastDodging and 400 or 250
-            local behind = pos - mob.part.CFrame.LookVector * (SeaCfg.beastDodging and 20 or 2)
-            -- o Sea Beast mergulha: nunca deixa o alvo ficar abaixo da altura minima sobre a agua
-            local goalY = math.max(pos.Y + height, levelCF.Y + SeaCfg.BeastMinAbove)
-            target = CFrame.new(behind.X, goalY, behind.Z) * hrp.CFrame.Rotation
-            if mob.dist <= 600 then releaseSkills(mob.part) end
-        elseif mob.terror then
-            -- alturas da referencia: na superficie 250, atacando (slam/spin) 150 e afastado 30, normal 40
-            local offset
-            if pos.Y > -3 then
-                offset = CFrame.new(0, 250, 0)
-            elseif terrorDodge() then
-                offset = CFrame.new(0, 150, 30)
-            else
-                offset = CFrame.new(0, 40, 0)
-            end
-            target = CFrame.new((mob.part.CFrame * offset).Position) * hrp.CFrame.Rotation
-            attackFocus = mob.model
-        else
-            target = CFrame.new(pos + Vector3.new(0, K.HOVER_HEIGHT, 0)) * hrp.CFrame.Rotation
-            attackFocus = mob.model
-        end
-        return
-    end
-
-    attackFocus = nil
-
-    -- sem alvos: remove a protecao do barco (RemoveProtect)
-    if seat then
-        local bp = seat:FindFirstChild("BoatProtectBP")
-        local bv = seat:FindFirstChild("BoatProtectBV")
-        if bp or bv then
-            -- desce o barco ate a agua antes de soltar, para ele nao cair com inercia e sair andando
-            local pivot = boat:GetPivot()
-            pcall(function()
-                boat:PivotTo(CFrame.new(pivot.Position.X, SeaCfg.BoatPosY, pivot.Position.Z) * pivot.Rotation)
-            end)
-            seat.AssemblyLinearVelocity = Vector3.zero
-            seat.AssemblyAngularVelocity = Vector3.zero
-            if bp then bp:Destroy() end
-            if bv then bv:Destroy() end
-        end
-    end
-
-    if boatLost then
-        if nearerToDealer(SeaCfg.lastBoatPos) then
-            SeaCfg.needNewBoat = true
-            SeaCfg.hadBoat = false
-            buyBoat()
-        else
-            resetCharacter("Boat destroyed: resetting")
-        end
-        return
-    end
-
-    if humanoid.SeatPart ~= seat then
-        Stats.State = "Returning to boat"
-        hover(true)
-        local seatCF = seat.CFrame * CFrame.new(0, 3, 0)
-        if (hrp.Position - seatCF.Position).Magnitude > 12 then
-            target = seatCF
-            return
-        end
-        SeaCfg.wantSit = true
-        target = nil
-        hover(false)
-        sitOnBoat(seat)
-        return
-    end
-
-    hover(false)
-    local flat = Vector3.new(levelCF.X - hrp.Position.X, 0, levelCF.Z - hrp.Position.Z).Magnitude
-    if SeaCfg.atSea and flat > 150 then SeaCfg.atSea = false end
-    if not SeaCfg.atSea and flat <= 30 then SeaCfg.atSea = true end
-
-    if SeaCfg.atSea then
-        if unselectedSea() then
-            Stats.State = "Avoiding unselected event"
-            target = CFrame.new(hrp.Position.X, levelCF.Y + 2000, hrp.Position.Z) * hrp.CFrame.Rotation
-        else
-            Stats.State = "Waiting Sea Events"
-            target = nil
-            SeaCfg.boatGoal = levelCF.Position
-            SeaCfg.boatGoalT = os.clock()
-        end
-    else
-        Stats.State = "Sailing to Danger Level " .. SeaCfg.Level
-        target = nil
-        SeaCfg.boatGoal = levelCF.Position
-        SeaCfg.boatGoalT = os.clock()
-    end
-end
-
-RunService.Stepped:Connect(function(_, dt)
-    if not SeaCfg.Auto then return end
-    local boat, seat = ownedBoat()
-    if not boat then return end
-    -- o assento precisa colidir, senao o personagem nao consegue sentar
-    for _, part in ipairs(boat:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = (part == seat) end
-    end
-
-    local goal = SeaCfg.boatGoal
-    local humanoid = Player.Character and Player.Character:FindFirstChildOfClass("Humanoid")
-    local seated = seat ~= nil and humanoid ~= nil and humanoid.SeatPart == seat
-    -- destino vence em 0.5s: nunca anda com destino velho
-    if goal and os.clock() - SeaCfg.boatGoalT > 0.5 then goal = nil end
-    if goal and seat and seated then
-        local from = Vector3.new(seat.Position.X, SeaCfg.BoatPosY, seat.Position.Z)
-        local delta = Vector3.new(goal.X, SeaCfg.BoatPosY, goal.Z) - from
-        local dist = delta.Magnitude
-        if dist > 25 then
-            local step = math.min(SeaCfg.BoatSpeed * dt, dist)
-            seat.CFrame = CFrame.new(from + delta.Unit * step) * seat.CFrame.Rotation
-        end
-        seat.AssemblyLinearVelocity = Vector3.zero
-    elseif seat and not seated and not seat:FindFirstChild("BoatProtectBP") then
-        -- ninguem no assento e sem protecao: impede o barco de sair andando sozinho
-        seat.AssemblyLinearVelocity = Vector3.zero
-        seat.AssemblyAngularVelocity = Vector3.zero
-    end
-end)
-
-SeaCfg.run = runSeaEvents
 end
 
 local Tyrant = {
@@ -2689,16 +2119,48 @@ end
 
 function Tyrant.shootDown(pos)
     Tyrant.aimDown(pos, function(aimPos, aimPart)
-        local tool = Player.Character and Player.Character:FindFirstChildOfClass("Tool")
-        if not tool then return end
+        local char = Player.Character
+        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
         local shootEvent = Net:FindFirstChild("RE/ShootGunEvent")
-        local shootFunction = tool:FindFirstChild("RemoteFunctionShoot")
-        for _ = 1, 3 do
+        local vim = game:GetService("VirtualInputManager")
+        local camera = workspace.CurrentCamera
+
+        for _ = 1, 5 do
+            -- garante que a Skull Guitar continua equipada
+            local tool = char and char:FindFirstChildOfClass("Tool")
+            if not (tool and tool.Name == "Skull Guitar") then
+                local guitar = Player.Backpack:FindFirstChild("Skull Guitar")
+                if guitar and humanoid then
+                    humanoid:EquipTool(guitar)
+                    task.wait(0.3)
+                end
+                tool = char and char:FindFirstChildOfClass("Tool")
+            end
+            if not tool then return end
+
+            -- ativa direto pela tool (funciona no mobile) e tambem por clique/toque no centro da tela
+            pcall(function() tool:Activate() end)
             pcall(click)
             if mouse1click then pcall(mouse1click) end
+            pcall(function()
+                local size = camera.ViewportSize
+                local cx, cy = size.X / 2, size.Y / 2
+                vim:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                vim:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+            end)
+            pcall(function()
+                local size = camera.ViewportSize
+                local cx, cy = size.X / 2, size.Y / 2
+                vim:SendTouchEvent(1, 0, cx, cy)
+                task.wait(0.05)
+                vim:SendTouchEvent(1, 2, cx, cy)
+            end)
+
+            -- dispara os remotes do tiro direto, sem depender de clique
             if shootEvent then
                 pcall(shootEvent.FireServer, shootEvent, aimPos, { aimPart })
             end
+            local shootFunction = tool:FindFirstChild("RemoteFunctionShoot")
             if shootFunction then
                 task.spawn(pcall, shootFunction.InvokeServer, shootFunction, aimPos, aimPart)
             end
@@ -2708,6 +2170,16 @@ function Tyrant.shootDown(pos)
 end
 
 -- sem Skull Guitar: usa as skills de fruta, melee, sword e gun (nessa ordem)
+K.TRANSFORM_FRUITS = { "dragon", "leopard", "kitsune", "t-rex", "trex", "yeti", "mammoth", "venom", "gas" }
+
+local function isTransformFruit(tool)
+    local lower = tool.Name:lower()
+    for _, word in ipairs(K.TRANSFORM_FRUITS) do
+        if lower:find(word, 1, true) then return true end
+    end
+    return false
+end
+
 function Tyrant.useSkills(abort)
     local char = Player.Character
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
@@ -2719,7 +2191,9 @@ function Tyrant.useSkills(abort)
         for _, tool in ipairs(container:GetChildren()) do
             if tool:IsA("Tool") then
                 local kind = isFruit(tool) and "Blox Fruit" or tool.ToolTip
-                if rank[kind] then table.insert(list, { tool, rank[kind] }) end
+                if rank[kind] then
+                    table.insert(list, { tool, rank[kind], kind == "Blox Fruit" and isTransformFruit(tool) })
+                end
             end
         end
     end
@@ -2730,10 +2204,13 @@ function Tyrant.useSkills(abort)
         task.wait(0.3)
         for _, key in ipairs({ Enum.KeyCode.Z, Enum.KeyCode.X, Enum.KeyCode.C, Enum.KeyCode.V, Enum.KeyCode.F }) do
             if abort() then return end
-            vim:SendKeyEvent(true, key, false, game)
-            task.wait(0.1)
-            vim:SendKeyEvent(false, key, false, game)
-            task.wait(0.2)
+            -- frutas que se transformam: pula a skill de transformacao (V)
+            if not (entry[3] and key == Enum.KeyCode.V) then
+                vim:SendKeyEvent(true, key, false, game)
+                task.wait(0.1)
+                vim:SendKeyEvent(false, key, false, game)
+                task.wait(0.2)
+            end
         end
     end
 end
@@ -2819,7 +2296,7 @@ end
 
 -- Auto Get Ghoul Race Fully: capitao -> (tocha) -> ectoplasma -> Experimic
 local Ghoul = { phase = nil, ecto = 0, ectoKnown = false, lastInv = -100, probeAt = 0, lastBuy = -100,
-    lastHop = -100, lastCaptainSeen = 0, since = os.clock(), warnedLevel = false,
+    lastHop = -100, lastCaptainSeen = 0, since = os.clock(),
     tried = {}, lastApiWarn = -100 }
 
 function Ghoul.hasTorch()
@@ -2956,7 +2433,7 @@ function Ghoul.decodeJobId(raw)
     return table.concat(out)
 end
 
--- busca na API os servers onde o Cursed Captain foi reportado (mais recentes primeiro)
+-- busca na API os servers onde o boss foi reportado (mais recentes primeiro)
 function Ghoul.fetchServers(bossKey)
     local req = Ghoul.request()
     if not req then return nil, "executor sem funcao de request" end
@@ -3200,14 +2677,6 @@ local function step()
         return
     end
 
-    if SeaCfg.Auto and not multiRaidActive() then
-        enableHaki()
-        lastMode = "sea"
-        Stats.State = "Sea Events"
-        SeaCfg.run()
-        return
-    end
-
     if multiRaidActive() then
         prep()
         lastMode = "multiraid"
@@ -3229,14 +2698,33 @@ local function step()
     if not stackBoss and Options.AttackDarkbeard and Options.AttackDarkbeard.Value then
         stackBoss, stackInWorld = findBossAny(K.DARKBEARD)
     end
+    local fromSelected = false
+    if not stackBoss and Options.KillBossSelected and Options.KillBossSelected.Value then
+        local selNames = K.Hop and K.Hop.NAMES[Options.HopMethod.Value]
+        if selNames then
+            stackBoss, stackInWorld = findBossAny(selNames)
+            fromSelected = stackBoss ~= nil
+        end
+    end
+    -- Boss Farm: boss escolhido no menu "Select Boss To Farm" (Sea 2 e Sea 3)
+    local fromBossFarm = false
+    if not stackBoss and Options.FarmBossSelected and Options.FarmBossSelected.Value then
+        local bossName = Options.SelectBoss and Options.SelectBoss.Value
+        if bossName then
+            stackBoss, stackInWorld = findBossAny({ bossName })
+            fromBossFarm = stackBoss ~= nil
+        end
+    end
     if stackBoss then
         prep()
         lastMode = "stack"
-        Stats.State = table.find(K.DOUGH_BOSS, stackBoss.Name) and "Dough King"
+        Stats.State = fromBossFarm and ("Boss Farm: " .. tostring(Options.SelectBoss.Value))
+            or fromSelected and ("Kill Boss: " .. tostring(Options.HopMethod.Value))
+            or table.find(K.DOUGH_BOSS, stackBoss.Name) and "Dough King"
             or table.find(K.SOUL_BOSS, stackBoss.Name) and "Soul Reaper"
             or table.find(K.DARKBEARD, stackBoss.Name) and "Darkbeard" or "Rip Indra"
         -- Dough King fica dentro do portal (igual ao Katakuri v1): longe demais, entra pelo espelho
-        if table.find(K.DOUGH_BOSS, stackBoss.Name) then
+        if table.find(K.DOUGH_BOSS, stackBoss.Name) or table.find(K.BOSS_NAMES, stackBoss.Name) then
             local hrp, bossRoot = root(), stackBoss:FindFirstChild("HumanoidRootPart")
             if hrp and bossRoot and (bossRoot.Position - hrp.Position).Magnitude > 1500 then
                 clearGroup()
@@ -3344,6 +2832,25 @@ local function step()
         attackFocus = nil
         Dough.craft()
         return
+    end
+
+    -- Boss Farm: boss escolhido ainda nao nasceu; espera no local de spawn (so se o Farm normal estiver desligado)
+    if Options.FarmBossSelected and Options.FarmBossSelected.Value and not Options.Farm.Value
+        and not Dough.phase and not Ghoul.phase then
+        local bossName = Options.SelectBoss and Options.SelectBoss.Value
+        if bossName then
+            prep()
+            lastMode = "bosswait"
+            Stats.State = "Boss Farm: esperando " .. tostring(bossName)
+            clearGroup()
+            attackFocus = nil
+            if bossName == "Cursed Captain" and enterShip() then return end
+            local pos = findSpawn({ bossName })
+            if pos then
+                target = CFrame.new(pos + Vector3.new(0, 25, 0))
+            end
+            return
+        end
     end
 
     if not (Options.Farm.Value or Dough.phase or Ghoul.phase == "ecto") or (method.cake and not InSea3) or (method.sea2 and not InSea2) then
@@ -3457,10 +2964,17 @@ local function step()
     end
 end
 
+local lastStepErr = -100
 local function farmLoop()
     while farming do
         local ok, err = pcall(step)
-        if not ok then warn(err) end
+        if not ok then
+            warn("[Batman Hub] step: " .. tostring(err))
+            if os.clock() - lastStepErr > 10 then
+                lastStepErr = os.clock()
+                notify("Batman Hub - erro", short(err), 8)
+            end
+        end
         task.wait(0.1)
     end
     if not traveling then
@@ -3568,6 +3082,20 @@ else
     Stack:AddToggle("AutoDough", { Title = "Auto Dough King", Default = false })
     Stack:AddToggle("SummonSoulReaper", { Title = "Auto Summon Soul Reaper", Default = false })
     Stack:AddToggle("KillSoulReaper", { Title = "Auto Kill Soul Reaper", Default = false })
+end
+
+-- Boss Farm (Sea 2 e Sea 3): a lista de bosses muda conforme o sea
+do
+    local BossSection = Stack:AddSection("Boss Farm")
+
+    BossSection:AddDropdown("SelectBoss", {
+        Title = "Select Boss To Farm",
+        Values = K.BOSS_FARM_LIST,
+        Multi = false,
+        Default = 1,
+    })
+
+    BossSection:AddToggle("FarmBossSelected", { Title = "Farm Boss Selected", Default = false })
 end
 
 -- no Sea 2 as opcoes do Sea 3 nao existem; o resto do codigo le Options.X, entao entram valores desligados
@@ -3732,6 +3260,34 @@ Settings:AddSlider("FlySpeed", {
 
 Settings:AddToggle("AutoClick", { Title = "Auto Click", Default = false })
 
+Settings:AddToggle("WalkOnWater", { Title = "Walk On Water", Default = true })
+
+do
+    local ON_SIZE = Vector3.new(1000, 113, 1000)
+    local OFF_SIZE = Vector3.new(1000, 80, 1000)
+
+    local function waterPart()
+        local map = workspace:FindFirstChild("Map")
+        return map and map:FindFirstChild("WaterBase-Plane")
+    end
+
+    Options.WalkOnWater:OnChanged(function(value)
+        local water = waterPart()
+        if water then water.Size = value and ON_SIZE or OFF_SIZE end
+    end)
+
+    -- mantem o tamanho enquanto ligado (o jogo pode resetar a agua)
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+            if Options.WalkOnWater.Value then
+                local water = waterPart()
+                if water and water.Size ~= ON_SIZE then water.Size = ON_SIZE end
+            end
+        end
+    end)
+end
+
 Settings:AddDropdown("SelectWeapon", {
     Title = "Select Weapon",
     Values = { "Melee", "Sword", "Fruit(M1)" },
@@ -3754,7 +3310,9 @@ local function refresh()
         or Options.KillSoulReaper.Value or Options.AutoDough.Value
         or (Options.AutoFactory and Options.AutoFactory.Value) or (Options.AttackDarkbeard and Options.AttackDarkbeard.Value)
         or (Options.AutoGhoul and Options.AutoGhoul.Value)
-        or multiRaidActive() or RaidCfg.AutoBuyChip or SeaCfg.Auto
+        or (Options.KillBossSelected and Options.KillBossSelected.Value)
+        or (Options.FarmBossSelected and Options.FarmBossSelected.Value)
+        or multiRaidActive() or RaidCfg.AutoBuyChip
     if want and not farming then
         farming = true
         task.spawn(farmLoop)
@@ -3772,6 +3330,7 @@ Options.AttackDough:OnChanged(refresh)
 Options.SummonSoulReaper:OnChanged(refresh)
 Options.KillSoulReaper:OnChanged(refresh)
 Options.AutoDough:OnChanged(refresh)
+Options.FarmBossSelected:OnChanged(refresh)
 if Options.AutoFactory then Options.AutoFactory:OnChanged(refresh) end
 if Options.AttackDarkbeard then Options.AttackDarkbeard:OnChanged(refresh) end
 if Options.AutoGhoul then
@@ -3922,6 +3481,13 @@ K.HopTab:AddButton({
         K.Hop.join(false)
     end,
 })
+
+K.HopTab:AddToggle("KillBossSelected", {
+    Title = "Kill Boss Selected",
+    Default = false,
+}):OnChanged(function()
+    refresh()
+end)
 
 K.HopTab:AddToggle("HopFarm", {
     Title = "Hop Farm",
