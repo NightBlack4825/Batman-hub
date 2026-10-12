@@ -8,7 +8,21 @@ local Workspace = game:GetService("Workspace")
 local Player = Players.LocalPlayer
 local K = {}
 K.SEA2_IDS = { [79091703265657] = true, [4442272183] = true }
+K.SEA3_IDS = { [7449423635] = true, [100117331123089] = true }
 local InSea2 = K.SEA2_IDS[game.PlaceId] == true
+
+-- so executa no Sea 2 e no Sea 3
+if not (InSea2 or K.SEA3_IDS[game.PlaceId]) then
+    warn("[Batman Hub] Este script so funciona no Sea 2 e no Sea 3.")
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Batman Hub",
+            Text = "Funciona apenas no Sea 2 e no Sea 3.",
+            Duration = 6,
+        })
+    end)
+    return
+end
 
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local Options = Fluent.Options
@@ -27,6 +41,7 @@ local Main = Window:AddTab({ Title = "Main", Icon = "home" })
 local Stack = Window:AddTab({ Title = "Stack Farming", Icon = "layers" })
 local StatusTab = not InSea2 and Window:AddTab({ Title = "Status", Icon = "activity" }) or nil
 local RaidTab = not InSea2 and Window:AddTab({ Title = "Raid", Icon = "users" }) or nil
+K.HopTab = not InSea2 and Window:AddTab({ Title = "Hop Server", Icon = "globe" }) or nil
 local LocalTab = Window:AddTab({ Title = "Local Player", Icon = "user" })
 local Travel = Window:AddTab({ Title = "Travel", Icon = "plane" })
 local Misc = Window:AddTab({ Title = "Misc", Icon = "wrench" })
@@ -42,7 +57,6 @@ K.MOB_AREAS = {
 }
 K.CAKE_ENTRANCE = CFrame.new(-2124, 69, -12401)
 K.CAKE_TOTAL = 500
-K.SEA3_IDS = { [7449423635] = true, [100117331123089] = true }
 
 K.METHODS = {
     ["Katakuri"] = {
@@ -119,7 +133,6 @@ K.GHOUL_LEVEL = 1000
 
 -- API Quantum Onyx: servers onde o Cursed Captain foi reportado
 K.API_URL = "https://api.quantumonyx.cc"
-K.API_ENDPOINT = "/api/logs/cursedcaptain"
 K.API_SECRET = "QnTmOnyX"
 K.API_ALPHABET = "kQ9mZ2xW7nR4vB1jY6tF3hD8pL5cG0sA"
 
@@ -2944,12 +2957,12 @@ function Ghoul.decodeJobId(raw)
 end
 
 -- busca na API os servers onde o Cursed Captain foi reportado (mais recentes primeiro)
-function Ghoul.fetchServers()
+function Ghoul.fetchServers(bossKey)
     local req = Ghoul.request()
     if not req then return nil, "executor sem funcao de request" end
 
     local ok, res = pcall(req, {
-        Url = K.API_URL .. K.API_ENDPOINT,
+        Url = K.API_URL .. "/api/logs/" .. bossKey,
         Method = "GET",
         Headers = { ["Content-Type"] = "application/json" },
     })
@@ -2960,9 +2973,9 @@ function Ghoul.fetchServers()
     local okJ, data = pcall(function()
         return game:GetService("HttpService"):JSONDecode(res.Body)
     end)
-    local entries = okJ and type(data) == "table" and data.cursedcaptain
+    local entries = okJ and type(data) == "table" and data[bossKey]
     if type(entries) ~= "table" or #entries == 0 then
-        return nil, "nenhum report recente do Cursed Captain"
+        return nil, "nenhum report recente desse boss"
     end
 
     local jobs = {}
@@ -2978,6 +2991,51 @@ function Ghoul.fetchServers()
     end
     if #jobs == 0 then return nil, "nenhum server valido na API" end
     return jobs
+end
+
+-- entra num dos servers da lista (pula os ja tentados) ate o teleporte acontecer ou cancelled() mandar parar
+function Ghoul.joinList(jobs, tried, cancelled, label)
+    local fresh = {}
+    for _, jobId in ipairs(jobs) do
+        if not tried[jobId] then table.insert(fresh, jobId) end
+    end
+    if #fresh == 0 then
+        table.clear(tried)
+        fresh = jobs
+    end
+
+    local currentJob = game.JobId
+    local TeleportService = game:GetService("TeleportService")
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local browser = (remotes and remotes:FindFirstChild("__ServerBrowser"))
+        or ReplicatedStorage:FindFirstChild("__ServerBrowser", true)
+
+    for i, jobId in ipairs(fresh) do
+        if cancelled() or game.JobId ~= currentJob then break end
+        tried[jobId] = true
+        notify("Server Hop", label .. ": tentando server " .. i .. "/" .. #fresh, 3)
+
+        local failed = false
+        local conn = TeleportService.TeleportInitFailed:Connect(function() failed = true end)
+
+        pcall(function()
+            if browser then
+                browser:InvokeServer("teleport", jobId)
+            else
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, Player)
+            end
+        end)
+
+        -- espera ate 6s o teleporte acontecer
+        local t0 = os.clock()
+        while os.clock() - t0 < 6 and game.JobId == currentJob and not cancelled() do
+            task.wait(0.2)
+        end
+        conn:Disconnect()
+
+        if game.JobId ~= currentJob then break end
+        if failed then task.wait(0.8) end
+    end
 end
 
 -- troca de server usando a API: entra nos servers que tem o Cursed Captain
@@ -2999,60 +3057,116 @@ function Ghoul.hop()
                 or Ghoul.hasTorch()
         end
 
-        local jobs, err = Ghoul.fetchServers()
+        local jobs, err = Ghoul.fetchServers("cursedcaptain")
         if not jobs then
             if os.clock() - Ghoul.lastApiWarn > 30 then
                 Ghoul.lastApiWarn = os.clock()
                 notify("Ghoul Race", "API: " .. tostring(err), 6)
             end
-            Ghoul.hopping = false
+        else
+            Ghoul.joinList(jobs, Ghoul.tried, cancelled, "Cursed Captain")
+        end
+        Ghoul.hopping = false
+    end)
+end
+
+-- Hop Server (Sea 3): entra em servers com o boss escolhido; so troca de novo quando o boss morreu
+do
+    local Hop = {
+        KEYS = {
+            ["Rip Indra"] = "ripindra",
+            ["Dough King"] = "doughking",
+            ["Tyrant Of The Skies"] = "tyrant",
+            ["Katakuri"] = "cakeprince",
+        },
+        NAMES = {
+            ["Rip Indra"] = K.RIP_BOSS,
+            ["Dough King"] = K.DOUGH_BOSS,
+            ["Tyrant Of The Skies"] = K.METHODS["Tyrant Of The Skies"].bosses,
+            ["Katakuri"] = K.BOSS_NAMES,
+        },
+        FILE = "BatmanHub_Hop.json",
+        GRACE = 10,
+        COOLDOWN = 15,
+        hopping = false,
+        lastHop = -100,
+        lastWarn = -100,
+        joinedAt = os.clock(),
+        tried = {},
+        triedMethod = nil,
+        resume = nil,
+    }
+    K.Hop = Hop
+
+    -- le o arquivo agora, antes de qualquer opcao carregada apagar ele
+    pcall(function()
+        if isfile and readfile and isfile(Hop.FILE) then
+            local data = game:GetService("HttpService"):JSONDecode(readfile(Hop.FILE))
+            if type(data) == "table" and data.active then Hop.resume = data end
+        end
+    end)
+
+    function Hop.bossAlive()
+        local names = Hop.NAMES[Options.HopMethod.Value]
+        return names ~= nil and (findEnemy(names, true) ~= nil or findUnloaded(names) ~= nil)
+    end
+
+    -- guarda que o Hop Farm estava ligado, para continuar no proximo server
+    function Hop.save()
+        pcall(function()
+            if not writefile then return end
+            writefile(Hop.FILE, game:GetService("HttpService"):JSONEncode({
+                active = true,
+                method = Options.HopMethod.Value,
+            }))
+        end)
+    end
+
+    function Hop.join(auto)
+        if Hop.hopping then
+            if not auto then notify("Hop Server", "Ja esta trocando de server", 3) end
             return
         end
+        if auto and os.clock() - Hop.lastHop < Hop.COOLDOWN then return end
+        Hop.hopping = true
+        Hop.lastHop = os.clock()
 
-        -- pula servers ja tentados (cheios ou que falharam); se todos foram, recomeca a lista
-        local fresh = {}
-        for _, jobId in ipairs(jobs) do
-            if not Ghoul.tried[jobId] then table.insert(fresh, jobId) end
+        local method = Options.HopMethod.Value
+        local key = Hop.KEYS[method]
+        if Hop.triedMethod ~= method then
+            table.clear(Hop.tried)
+            Hop.triedMethod = method
         end
-        if #fresh == 0 then
-            Ghoul.tried = {}
-            fresh = jobs
-        end
+        if auto then Hop.save() end
 
-        local currentJob = game.JobId
-        local TeleportService = game:GetService("TeleportService")
-        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-        local browser = (remotes and remotes:FindFirstChild("__ServerBrowser"))
-            or ReplicatedStorage:FindFirstChild("__ServerBrowser", true)
-
-        for i, jobId in ipairs(fresh) do
-            if cancelled() or game.JobId ~= currentJob then break end
-            Ghoul.tried[jobId] = true
-            notify("Server Hop", "Cursed Captain: tentando server " .. i .. "/" .. #fresh, 3)
-
-            local failed = false
-            local conn = TeleportService.TeleportInitFailed:Connect(function() failed = true end)
-
-            pcall(function()
-                if browser then
-                    browser:InvokeServer("teleport", jobId)
-                else
-                    TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, Player)
-                end
-            end)
-
-            -- espera ate 6s o teleporte acontecer
-            local t0 = os.clock()
-            while os.clock() - t0 < 6 and game.JobId == currentJob and not cancelled() do
-                task.wait(0.2)
+        task.spawn(function()
+            local function cancelled()
+                return auto and (not (Options.HopFarm and Options.HopFarm.Value) or Options.HopMethod.Value ~= method)
             end
-            conn:Disconnect()
 
-            if game.JobId ~= currentJob then break end
-            if failed then task.wait(0.8) end
+            local jobs, err = Ghoul.fetchServers(key)
+            if not jobs then
+                if not auto or os.clock() - Hop.lastWarn > 30 then
+                    Hop.lastWarn = os.clock()
+                    notify("Hop Server", "API: " .. tostring(err), 6)
+                end
+            else
+                Ghoul.joinList(jobs, Hop.tried, cancelled, method)
+            end
+            Hop.hopping = false
+        end)
+    end
+
+    -- Hop Farm: espera o server carregar e so troca quando o boss escolhido nao existe mais (morto)
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            if not InSea2 and Options.HopFarm and Options.HopFarm.Value and not Hop.hopping then
+                if not Hop.bossAlive() and os.clock() - Hop.joinedAt > Hop.GRACE then
+                    Hop.join(true)
+                end
+            end
         end
-
-        Ghoul.hopping = false
     end)
 end
 
@@ -3792,6 +3906,37 @@ MultiRaidSection:AddDropdown("RaidGuestSlot", {
 end)
 end
 
+if not InSea2 then
+K.HopTab:AddDropdown("HopMethod", {
+    Title = "Method Farm",
+    Values = { "Rip Indra", "Dough King", "Tyrant Of The Skies", "Katakuri" },
+    Multi = false,
+    Default = 1,
+}):OnChanged(function()
+    if Options.HopFarm and Options.HopFarm.Value then K.Hop.save() end
+end)
+
+K.HopTab:AddButton({
+    Title = "Hop Boss Server Selected",
+    Callback = function()
+        K.Hop.join(false)
+    end,
+})
+
+K.HopTab:AddToggle("HopFarm", {
+    Title = "Hop Farm",
+    Default = false,
+}):OnChanged(function(value)
+    if value then
+        K.Hop.save()
+    else
+        pcall(function()
+            if isfile and delfile and isfile(K.Hop.FILE) then delfile(K.Hop.FILE) end
+        end)
+    end
+end)
+end
+
 Player.Idled:Connect(function()
     VirtualUser:CaptureController()
     VirtualUser:ClickButton2(Vector2.new())
@@ -3915,6 +4060,15 @@ end
 -- depois de trocar de server, continua o Auto Ghoul se ele estava ligado
 if InSea2 and Options.AutoGhoul and isfile and isfile(K.GHOUL_FILE) then
     pcall(function() Options.AutoGhoul:SetValue(true) end)
+end
+
+-- depois de trocar de server, continua o Hop Farm se ele estava ligado
+if not InSea2 and K.Hop and K.Hop.resume and Options.HopFarm then
+    pcall(function()
+        local method = K.Hop.resume.method
+        if method and K.Hop.KEYS[method] then Options.HopMethod:SetValue(method) end
+        Options.HopFarm:SetValue(true)
+    end)
 end
 
 Window:SelectTab(1)
