@@ -41,6 +41,7 @@ local Main = Window:AddTab({ Title = "Main", Icon = "home" })
 local Stack = Window:AddTab({ Title = "Stack Farming", Icon = "layers" })
 local StatusTab = not InSea2 and Window:AddTab({ Title = "Status", Icon = "activity" }) or nil
 local RaidTab = not InSea2 and Window:AddTab({ Title = "Raid", Icon = "users" }) or nil
+K.TrialTab = not InSea2 and Window:AddTab({ Title = "Trial", Icon = "flag" }) or nil
 K.HopTab = not InSea2 and Window:AddTab({ Title = "Hop Server", Icon = "globe" }) or nil
 local LocalTab = Window:AddTab({ Title = "Local Player", Icon = "user" })
 local Travel = Window:AddTab({ Title = "Travel", Icon = "plane" })
@@ -307,7 +308,7 @@ local function waitFor(fn, timeout)
     end
 end
 
-local function detectSea3()
+function K.detectSea3()
     if K.SEA3_IDS[game.PlaceId] then return true end
     local origin = workspace:FindFirstChild("_WorldOrigin")
     local spawns = origin and origin:FindFirstChild("EnemySpawns")
@@ -322,7 +323,7 @@ end
 
 task.spawn(function()
     while true do
-        local ok, result = pcall(detectSea3)
+        local ok, result = pcall(K.detectSea3)
         InSea3 = ok and result == true
         task.wait(2)
     end
@@ -352,7 +353,7 @@ local function usable(enemy)
     return alive(enemy) and not skipped(enemy) and not nearBug(enemy.HumanoidRootPart.Position)
 end
 
-local function watchdog()
+function K.watchdog()
     if not BringPoint then return end
     for _, enemy in ipairs(BringGroup) do
         if alive(enemy) then
@@ -372,7 +373,7 @@ local function watchdog()
     end
 end
 
-local function pickMob(method)
+function K.pickMob(method)
     local level = Player.Data.Level.Value
     local picked = method.mobs[1]
     for _, mob in ipairs(method.mobs) do
@@ -383,7 +384,7 @@ local function pickMob(method)
     return picked
 end
 
-local function allNames(method, first)
+function K.allNames(method, first)
     local names = { first.name }
     for _, mob in ipairs(method.mobs) do
         if mob.name ~= first.name then
@@ -407,14 +408,14 @@ local function questTitle()
     return ok and text or ""
 end
 
-local function questNeeded(mob)
+function K.questNeeded(mob)
     local ok, count = pcall(function()
         return require(ReplicatedStorage.Quests)[mob.quest][mob.idx].Task[mob.name]
     end)
     return ok and tonumber(count) or 10
 end
 
-local function questDone()
+function K.questDone()
     if kills >= needed then return true end
     if questVisible() then
         questSeen, hiddenSince = true, nil
@@ -575,10 +576,44 @@ function Aim.install()
 end
 
 local lastFruitClick = 0
-K.FRUIT_CLICK_DELAY = 0.3
+K.FRUIT_CLICK_DELAY = 0.05
 K.FRUIT_GRACE = 1.2
 local lastFocusEnemy, lastFocusT = nil, 0
 K.FRUIT_RANGE = 220
+
+-- click de fruta: fruta normal dispara para baixo; Blade-Blade e Gas-Gas disparam em cada mob a 60 studs (combo 1 a 5)
+K.REMOTE_FRUITS = { ["Blade-Blade"] = true, ["Gas-Gas"] = true }
+K.comboIndex, K.lastCombo = 0, 0
+
+function K.fruitClick(tool, hrp)
+    if tool:GetAttribute("ServerState") ~= nil then return end
+    if tool.ToolTip ~= "Blox Fruit" then return end
+    local remote = tool:FindFirstChild("LeftClickRemote")
+    if not remote then return end
+
+    if not K.REMOTE_FRUITS[tool.Name] then
+        pcall(function()
+            remote:FireServer(Vector3.new(0.01, -500, 0.01), 1, true)
+        end)
+        return
+    end
+
+    if tick() - K.lastCombo > 0.65 then K.comboIndex = 0 end
+    K.comboIndex = (K.comboIndex >= 5) and 1 or (K.comboIndex + 1)
+    K.lastCombo = tick()
+
+    for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+        local hum = mob:FindFirstChildOfClass("Humanoid")
+        local mobRoot = mob:FindFirstChild("HumanoidRootPart") or mob.PrimaryPart
+        if hum and hum.Health > 0 and mobRoot and not mob:GetAttribute("IsBoat")
+            and (mobRoot.Position - hrp.Position).Magnitude <= 60 then
+            local dir = (mobRoot.Position - hrp.Position).Unit
+            pcall(function()
+                remote:FireServer(dir, K.comboIndex)
+            end)
+        end
+    end
+end
 
 local function fastAttack()
     local char = Player.Character
@@ -651,8 +686,7 @@ local function fastAttack()
         end
         lastFruitClick = os.clock()
 
-        local direction = aimPos - hrp.Position
-        remote:FireServer(direction.Magnitude > 0 and direction.Unit or hrp.CFrame.LookVector, 1)
+        K.fruitClick(tool, hrp)
 
         if #targets == 0 then return end
     else
@@ -758,7 +792,7 @@ end
 
 local castleArrived = false
 
-local function raidActive()
+function K.raidActive()
     local now = os.clock()
     if #castleEnemies() > 0 then
         raidSawEnemies = true
@@ -779,7 +813,7 @@ local function raidActive()
     return false
 end
 
-local function handleRaid()
+function K.handleRaid()
     clearGroup()
 
     -- primeiro chega no Castelo do Mar; so depois comeca a atacar
@@ -819,7 +853,7 @@ local function findBossAny(names)
     end
 end
 
-local function eliteQuestActive()
+function K.eliteQuestActive()
     if not questVisible() then return false end
     local title = questTitle():lower()
     for _, name in ipairs(K.ELITE_BOSSES) do
@@ -828,9 +862,9 @@ local function eliteQuestActive()
     return false
 end
 
-local function handleElite(boss, inWorld)
+function K.handleElite(boss, inWorld)
     clearGroup()
-    if not eliteQuestActive() and os.clock() - lastEliteCall > K.ELITE_CALL_COOLDOWN then
+    if not K.eliteQuestActive() and os.clock() - lastEliteCall > K.ELITE_CALL_COOLDOWN then
         lastEliteCall = os.clock()
         if questVisible() and questTitle() ~= "" then
             commF("AbandonQuest")
@@ -865,7 +899,7 @@ end
 
 local lastSummonUse = 0
 
-local function findEssence()
+function K.findEssence()
     for _, container in ipairs({ Player.Character, Player.Backpack }) do
         if container then
             for _, tool in ipairs(container:GetChildren()) do
@@ -875,7 +909,7 @@ local function findEssence()
     end
 end
 
-local function handleSummon(essence)
+function K.handleSummon(essence)
     clearGroup()
     attackFocus = nil
     target = K.SOUL_ALTAR
@@ -1020,7 +1054,7 @@ local function findBoss()
     end
 end
 
-local function applyCountText(res)
+function K.applyCountText(res)
     local text = res ~= nil and tostring(res) or ""
     if text == "" or text == "false" or text == "nil" or text == "true" then return end
 
@@ -1075,7 +1109,7 @@ local function queryCount()
     else
         ok, res = commF("CakePrinceSpawner", true)
     end
-    if ok then pcall(applyCountText, res) end
+    if ok then pcall(K.applyCountText, res) end
 end
 
 task.spawn(function()
@@ -1116,7 +1150,7 @@ local function reachBoss()
     end
 end
 
-local function summonBoss()
+function K.summonBoss()
     for _ = 1, 3 do
         if not farming then return false end
         if waitFor(findBoss, 2) then return true end
@@ -1181,7 +1215,7 @@ local function katakuri()
         clearGroup()
         attackFocus = nil
         Stats.State = "Summoning Katakuri"
-        if not summonBoss() then
+        if not K.summonBoss() then
             Kat.blockUntil = os.clock() + 30
             Kat.remaining = nil
         end
@@ -1193,7 +1227,7 @@ end
 
 local fruitTry = setmetatable({}, { __mode = "k" })
 
-local function nearestFruit()
+function K.nearestFruit()
     local hrp = root()
     local nearest, best = nil, math.huge
     for _, v in ipairs(workspace:GetChildren()) do
@@ -1210,7 +1244,7 @@ local function nearestFruit()
     return nearest
 end
 
-local function handleFruit(fruit)
+function K.handleFruit(fruit)
     clearGroup()
     attackFocus = nil
     local handle = fruit:FindFirstChild("Handle")
@@ -1230,7 +1264,7 @@ local function handleFruit(fruit)
     end
 end
 
-local function storeFruits()
+function K.storeFruits()
     local fruits = {}
     for _, container in ipairs({ Player.Character, Player.Backpack }) do
         if container then
@@ -1254,7 +1288,7 @@ task.spawn(function()
     while true do
         task.wait(2)
         if Options.StoreFruits and Options.StoreFruits.Value and not Stats.PauseStore then
-            pcall(storeFruits)
+            pcall(K.storeFruits)
         end
     end
 end)
@@ -1319,7 +1353,7 @@ local function chipWanted()
     return multiRaidActive() or RaidCfg.AutoBuyChip
 end
 
-local function abortChip()
+function K.abortChip()
     return not chipWanted()
 end
 
@@ -1340,7 +1374,7 @@ local function flyAndWait(cf, timeout, abort)
     flyTo(cf, 8, timeout, abort)
 end
 
-local function enemyNames()
+function K.enemyNames()
     local names, seen = {}, {}
     for _, e in ipairs(workspace.Enemies:GetChildren()) do
         if not seen[e.Name] then
@@ -1371,7 +1405,7 @@ local function killTarget(enemy, abort, stuck)
             clearGroup()
             target = CFrame.new(hoverPos)
         else
-            if BringGroup[1] ~= enemy or not BringPoint then buildBringGroup(enemy, enemyNames()) end
+            if BringGroup[1] ~= enemy or not BringPoint then buildBringGroup(enemy, K.enemyNames()) end
             target = CFrame.new(BringPoint + Vector3.new(0, K.HOVER_HEIGHT, 0))
         end
         click()
@@ -1400,7 +1434,7 @@ Player.CharacterAdded:Connect(function()
 end)
 
 local RaidBtnPart, RaidBtnDet, RaidBtnTry = nil, nil, 0
-local function findRaidButton()
+function K.findRaidButton()
     if RaidBtnPart and RaidBtnPart.Parent and RaidBtnDet and RaidBtnDet.Parent then
         return RaidBtnPart, RaidBtnDet
     end
@@ -1434,7 +1468,7 @@ local function presentTargets()
     return list
 end
 
-local function atAnyGuestSlot(p)
+function K.atAnyGuestSlot(p)
     local r = p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
     if not r then return false end
     for _, cf in ipairs(RaidCfg.GuestCFrames) do
@@ -1446,14 +1480,14 @@ local function atAnyGuestSlot(p)
     return false
 end
 
-local function allSecondariesReady(list)
+function K.allSecondariesReady(list)
     for _, p in ipairs(list) do
-        if not atAnyGuestSlot(p) then return false, p.Name end
+        if not K.atAnyGuestSlot(p) then return false, p.Name end
     end
     return true
 end
 
-local function lobbyPos()
+function K.lobbyPos()
     return RaidCfg.HostCFrame.Position
 end
 
@@ -1468,7 +1502,7 @@ end
 
 local function farFromLobby()
     local hrp = root()
-    return hrp ~= nil and (hrp.Position - lobbyPos()).Magnitude > 600
+    return hrp ~= nil and (hrp.Position - K.lobbyPos()).Magnitude > 600
 end
 
 local RaidFighting = false
@@ -1531,7 +1565,7 @@ end
 
 -- ilhas 4 e 5: fica parado no meio da ilha enquanto a Kill Aura mata tudo
 local auraIdleSince, auraEnemySince = nil, nil
-local function raidAuraStand(hrp)
+function K.raidAuraStand(hrp)
     if not RaidCfg.KillAura then auraIdleSince, auraEnemySince = nil, nil return false end
     local cur, nxt, curPart = raidIslandInfo()
     if not cur or cur < 4 or not curPart then auraIdleSince, auraEnemySince = nil, nil return false end
@@ -1581,7 +1615,7 @@ local function raidFight(graceSeconds)
             local hrp = root()
             if not hrp then
                 task.wait(0.2)
-            elseif raidAuraStand(hrp) then
+            elseif K.raidAuraStand(hrp) then
                 idleSince = nil
                 task.wait(0.2)
             else
@@ -1642,7 +1676,7 @@ local function raidFight(graceSeconds)
 end
 
 -- Kill Aura do raid: mata na hora os inimigos a ate 600 studs do centro das ilhas 4 e 5
-local function raidKillAuraStep()
+function K.raidKillAuraStep()
     local cur, _, curPart = raidIslandInfo()
     if not cur or cur < 4 or not curPart then return end
     pcall(sethiddenproperty, Player, "SimulationRadius", math.huge)
@@ -1664,7 +1698,7 @@ task.spawn(function()
     while true do
         task.wait(0.1)
         if RaidCfg.KillAura and farming and multiRaidActive() and RaidFighting and raidInside() then
-            pcall(raidKillAuraStep)
+            pcall(K.raidKillAuraStep)
         end
     end
 end)
@@ -1679,7 +1713,7 @@ end
 local RaidPayFruit = nil
 local lastFruitNotify = -100
 
-local function anyFruitTool()
+function K.anyFruitTool()
     for _, c in ipairs({ Player.Backpack, Player.Character }) do
         if c then
             for _, t in ipairs(c:GetChildren()) do
@@ -1701,7 +1735,7 @@ local FruitPrices = {
     leopard = 5000000, kitsune = 8000000,
 }
 
-local function fruitPriceByName(name)
+function K.fruitPriceByName(name)
     local low = tostring(name):lower():gsub("[%s%-_]", "")
     local bestKey
     for k in pairs(FruitPrices) do
@@ -1710,7 +1744,7 @@ local function fruitPriceByName(name)
     return bestKey and FruitPrices[bestKey] or nil
 end
 
-local function firstFruitTool()
+function K.firstFruitTool()
     for _, c in ipairs({ Player.Backpack, Player.Character }) do
         if c then
             for _, t in ipairs(c:GetChildren()) do
@@ -1721,11 +1755,11 @@ local function firstFruitTool()
 end
 
 -- frutas guardadas, da mais barata para a mais cara
-local function readStoredFruits()
+function K.readStoredFruits()
     local list, seen = {}, {}
     local function add(name, price)
         if type(name) ~= "string" or name == "" or seen[name] then return end
-        price = tonumber(price) or fruitPriceByName(name)
+        price = tonumber(price) or K.fruitPriceByName(name)
         if not price then return end
         seen[name] = true
         table.insert(list, { name = name, price = price })
@@ -1764,7 +1798,7 @@ local function readStoredFruits()
     return list
 end
 
-local function nameVariants(name)
+function K.nameVariants(name)
     local out = { name }
     local base = name:gsub(" Fruit$", "")
     local b2 = base:match("^([^%-]+)%-") or base
@@ -1774,18 +1808,18 @@ local function nameVariants(name)
     return out
 end
 
-local function unstoreCheapFruit()
-    local fruits = readStoredFruits()
+function K.unstoreCheapFruit()
+    local fruits = K.readStoredFruits()
     if #fruits == 0 then return false, "nenhuma fruta guardada lida do inventario" end
     local tried = 0
     for _, f in ipairs(fruits) do
         if f.price <= RaidCfg.MaxFruitPrice then
             tried += 1
-            for _, nm in ipairs(nameVariants(f.name)) do
+            for _, nm in ipairs(K.nameVariants(f.name)) do
                 pcall(function() CommF:InvokeServer("LoadFruit", nm) end)
                 local t0 = os.clock()
                 while os.clock() - t0 < 2 do
-                    local tool = firstFruitTool()
+                    local tool = K.firstFruitTool()
                     if tool then
                         RaidPayFruit = tool:GetAttribute("OriginalName")
                         return true, f.name .. " (" .. f.price .. ")"
@@ -1809,14 +1843,14 @@ local function buyChip()
         if npc then
             local okp, pivot = pcall(function() return npc:GetPivot() end)
             if okp then
-                flyAndWait(CFrame.new(pivot.Position + Vector3.new(0, 3, 0)), 60, abortChip)
+                flyAndWait(CFrame.new(pivot.Position + Vector3.new(0, 3, 0)), 60, K.abortChip)
             end
         end
         if not chipWanted() then return end
 
-        if not anyFruitTool() then
+        if not K.anyFruitTool() then
             if RaidCfg.AutoUnstore or (RaidCfg.Multi and RaidCfg.Pay) then
-                local okU, info = unstoreCheapFruit()
+                local okU, info = K.unstoreCheapFruit()
                 Stats.RaidMsg = okU and ("pagando com: " .. info) or info
                 if not okU and os.clock() - lastFruitNotify > 30 then
                     lastFruitNotify = os.clock()
@@ -1841,7 +1875,7 @@ local function buyChip()
 end
 
 local function pressRaidButton()
-    local _, det = findRaidButton()
+    local _, det = K.findRaidButton()
     if not det then
         raidWarn("botao do raid nao encontrado")
         return false
@@ -1871,7 +1905,7 @@ local function pressRaidButton()
     return false
 end
 
-local function runRaidPay()
+function K.runRaidPay()
     if #RaidCfg.Targets == 0 then
         raidWarn("nenhuma conta secundaria selecionada na aba Raid")
         task.wait(1)
@@ -1898,7 +1932,7 @@ local function runRaidPay()
         targets = presentTargets()
         if #targets == 0 then return end
         if inRaidNow() then raidFight(0) return end
-        local ready, missing = allSecondariesReady(targets)
+        local ready, missing = K.allSecondariesReady(targets)
         if ready then break end
         Stats.RaidMsg = "esperando " .. tostring(missing) .. " ir para um slot"
         if not warned and os.clock() - waitStart > 30 then
@@ -1918,7 +1952,7 @@ local function runRaidPay()
     end
 end
 
-local function runRaidSecondary()
+function K.runRaidSecondary()
     if inRaidNow() then
         raidFight(0)
         return
@@ -1934,7 +1968,7 @@ end
 
 local lastChipTry = -100
 
-local function runAutoRaid()
+function K.runAutoRaid()
     if not InSea3 then
         raidWarn("Auto Raid so funciona no Sea 3")
         task.wait(2)
@@ -1963,11 +1997,11 @@ local function runAutoRaid()
     end
 end
 
-local function runMultiRaid()
+function K.runMultiRaid()
     if RaidCfg.Multi and (RaidCfg.Pay ~= RaidCfg.Secondary) then
-        if RaidCfg.Pay then runRaidPay() else runRaidSecondary() end
+        if RaidCfg.Pay then K.runRaidPay() else K.runRaidSecondary() end
     else
-        runAutoRaid()
+        K.runAutoRaid()
     end
 end
 
@@ -2647,8 +2681,369 @@ do
     end)
 end
 
+-- Trial (Race V4): auto trial / multi trial / puxar alavanca
+local Trial = {
+    cfg = { Auto = false, Multi = false, Winner = Player.Name, Secondaries = {} },
+    state = "-", prog = nil, door = false, refreshAt = -100,
+    waitSince = nil, leverDone = false, streamAt = -100, entryTries = 0, loadSince = nil, travelAt = -100,
+    resetDone = false, secUntil = 0,
+    lastSkill = 0, skillIdx = 0, lastM1 = 0, aimSet = false,
+    vim = game:GetService("VirtualInputManager"),
+}
+
+function Trial.active()
+    return Trial.cfg.Auto or Trial.cfg.Multi
+end
+
+function Trial.abort()
+    return not Trial.active()
+end
+
+K.TEMPLE_ENTRANCE = Vector3.new(28283, 14897, 105)
+K.TEMPLE_POS = Vector3.new(28610, 14897, 106)
+K.TEMPLE_LEVER = CFrame.new(28575, 14937, 72)
+K.TRIAL_RACES = { Human = true, Skypiea = true, Fishman = true, Mink = true, Ghoul = true, Cyborg = true }
+K.TEMPLE_NPC = CFrame.new(3029.3173828125, 2281.036376953125, -7322.07470703125)
+K.TRIAL_DOORS = {
+    Ghoul = CFrame.new(28673.220703125, 14890.646484375, 451.50628662109375),
+    Skypiea = CFrame.new(28963.349609375, 14919.5947265625, 234.35325622558594),
+    Human = CFrame.new(29232.130859375, 14890.9462890625, -206.43748474121094),
+    Mink = CFrame.new(29015.7421875, 14890.9462890625, -379.72149658203125),
+    Cyborg = CFrame.new(28497.912109375, 14895.9462890625, -422.6658935546875),
+    Fishman = CFrame.new(28229.40625, 14890.9462890625, -211.5585174560547),
+}
+
+function Trial.distTo(pos)
+    local hrp = root()
+    return hrp and (hrp.Position - pos).Magnitude or math.huge
+end
+
+function Trial.role()
+    if Trial.cfg.Multi then
+        if Trial.cfg.Winner == Player.Name then return "winner" end
+        if table.find(Trial.cfg.Secondaries, Player.Name) then return "secondary" end
+        return nil
+    end
+    if Trial.cfg.Auto then return "winner" end
+end
+
+-- progresso do Race V4 e porta do templo (consulta a cada 3s)
+function Trial.refresh()
+    if os.clock() - Trial.refreshAt < 3 then return end
+    Trial.refreshAt = os.clock()
+    local ok, res = commF("RaceV4Progress", "Check")
+    Trial.prog = ok and tonumber(res) or nil
+    local ok2, door = commF("CheckTempleDoor")
+    Trial.door = ok2 and door == true
+end
+
+function Trial.hasGear()
+    Trial.refresh()
+    return (Trial.prog ~= nil and Trial.prog >= 2) or Trial.door
+end
+
+-- pede ao jogo para carregar o mapa em volta de uma posicao (o templo nao carrega sozinho depois do teleporte)
+function Trial.stream(pos)
+    pcall(function() Player:RequestStreamAroundAsync(pos, 3) end)
+end
+
+-- traz o Temple of Time do MapStash para o mapa e garante que esta no Sea 3
+function Trial.loadTemple()
+    local map = workspace:FindFirstChild("Map")
+    if map and not map:FindFirstChild("Temple of Time") then
+        pcall(function()
+            ReplicatedStorage.MapStash["Temple of Time"].Parent = map
+        end)
+    end
+    if workspace:GetAttribute("MAP") ~= "Sea3" and os.clock() - Trial.travelAt > 10 then
+        Trial.travelAt = os.clock()
+        commF("TravelZou")
+    end
+end
+
+function Trial.templeLoaded()
+    local map = workspace:FindFirstChild("Map")
+    return map ~= nil and map:FindFirstChild("Temple of Time") ~= nil
+end
+
+-- true quando esta no Templo do Tempo com o mapa carregado.
+-- Entra pelo requestEntrance (2 tentativas) e, se nao der, pelo NPC; se o mapa nao carregar, entra de novo
+function Trial.inTemple()
+    Trial.loadTemple()
+    if Trial.distTo(K.TEMPLE_POS) > 1500 then
+        Trial.leverDone = false
+        Trial.loadSince = nil
+        target = nil
+        if Trial.entryTries < 2 then
+            Trial.entryTries += 1
+            Trial.state = "entrando no Templo do Tempo"
+            commF("requestEntrance", K.TEMPLE_ENTRANCE)
+            task.wait(1.5)
+        else
+            if Trial.distTo(K.TEMPLE_NPC.Position) > 20 then
+                Trial.state = "indo ao NPC do Templo do Tempo"
+                flyTo(K.TEMPLE_NPC, 15, 90, Trial.abort)
+                return false
+            end
+            Trial.state = "falando com o NPC do Templo do Tempo"
+            commF("RaceV4Progress", "Teleport")
+            Trial.entryTries = 0
+            task.wait(1.5)
+        end
+        return false
+    end
+
+    Trial.entryTries = 0
+    if Trial.templeLoaded() then
+        Trial.loadSince = nil
+        return true
+    end
+
+    -- dentro da area do templo mas o mapa ainda nao carregou: anda ate o centro para o jogo carregar
+    Trial.loadSince = Trial.loadSince or os.clock()
+    Trial.state = "carregando o templo"
+    Trial.loadTemple()
+    Trial.stream(K.TEMPLE_POS)
+    flyTo(CFrame.new(K.TEMPLE_POS), 8, 15, Trial.abort)
+    if Trial.templeLoaded() then
+        Trial.loadSince = nil
+        return true
+    end
+    if os.clock() - Trial.loadSince > 20 then
+        Trial.loadSince = nil
+        commF("requestEntrance", K.TEMPLE_ENTRANCE)
+        task.wait(1.5)
+    end
+    return false
+end
+
+function Trial.secondariesNear()
+    for _, name in ipairs(Trial.cfg.Secondaries) do
+        if name ~= Player.Name then
+            local p = Players:FindFirstChild(name)
+            local r = p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+            if p and not (r and (r.Position - K.TEMPLE_POS).Magnitude <= 1500) then return false, name end
+        end
+    end
+    return true
+end
+
+function Trial.winnerNear()
+    local p = Players:FindFirstChild(Trial.cfg.Winner or "")
+    local r = p and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+    return r ~= nil and (r.Position - K.TEMPLE_POS).Magnitude <= 400
+end
+
+-- ataca o Sea Beast da trial do Fishman com as skills (Z X C V F em rodizio) e o clique
+function Trial.hitBeast(part)
+    Aim.install()
+    Aim.pos, Aim.part = part.Position, part
+    Trial.aimSet = true
+    local char = Player.Character
+    local hrp = root()
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    if os.clock() - Trial.lastSkill > 0.35 then
+        Trial.lastSkill = os.clock()
+        Trial.skillIdx = Trial.skillIdx % 5 + 1
+        local key = ({ Enum.KeyCode.Z, Enum.KeyCode.X, Enum.KeyCode.C, Enum.KeyCode.V, Enum.KeyCode.F })[Trial.skillIdx]
+        if not (key == Enum.KeyCode.V and tool and isFruit(tool) and isTransformFruit(tool)) then
+            task.spawn(function()
+                pcall(function()
+                    Trial.vim:SendKeyEvent(true, key, false, game)
+                    task.wait(0.1)
+                    Trial.vim:SendKeyEvent(false, key, false, game)
+                end)
+            end)
+        end
+    end
+    if tool and hrp and selectedWeapon() == "Fruit(M1)" and isFruit(tool) then
+        local remote = tool:FindFirstChild("LeftClickRemote")
+        if remote and os.clock() - Trial.lastM1 > K.FRUIT_CLICK_DELAY then
+            Trial.lastM1 = os.clock()
+            local d = part.Position - hrp.Position
+            remote:FireServer(d.Magnitude > 0 and d.Unit or hrp.CFrame.LookVector, 1)
+        end
+    else
+        click()
+    end
+end
+
+-- dentro da trial (RaidTimer visivel): cada raca tem a sua tarefa
+function Trial.inside(race)
+    local hrp = root()
+    local map = workspace:FindFirstChild("Map")
+    if not (hrp and map) then return end
+    Trial.state = "Trial: " .. race
+    clearGroup()
+    attackFocus = nil
+    enableHaki()
+    equipWeapon()
+
+    if race == "Mink" then
+        local t = map:FindFirstChild("MinkTrial")
+        local ceiling = t and t:FindFirstChild("Ceiling")
+        if ceiling and (ceiling.Position - hrp.Position).Magnitude <= 500 then
+            target = ceiling.CFrame * CFrame.new(0, -5, 0)
+        end
+    elseif race == "Human" or race == "Ghoul" then
+        local t = map:FindFirstChild(race .. "Trial")
+        local spawn = t and t:FindFirstChild("BossSpawn")
+        if spawn and (hrp.Position - spawn.Position).Magnitude <= 250 then
+            for _, e in ipairs(workspace.Enemies:GetChildren()) do
+                if alive(e) and (e.HumanoidRootPart.Position - spawn.Position).Magnitude <= 200 then
+                    killTarget(e, Trial.abort)
+                    break
+                end
+            end
+        end
+    elseif race == "Cyborg" then
+        local t = map:FindFirstChild("CyborgTrial")
+        local floor = t and t:FindFirstChild("Floor")
+        if floor and (hrp.Position - floor.Position).Magnitude <= 250 then
+            target = floor.CFrame * CFrame.new(0, 180, 0)
+        end
+    elseif race == "Skypiea" then
+        local t = map:FindFirstChild("SkyTrial")
+        local model = t and t:FindFirstChild("Model")
+        local finish = model and model:FindFirstChild("FinishPart")
+        if finish and (finish.Position - hrp.Position).Magnitude <= 1000 then
+            target = finish.CFrame
+        end
+    elseif race == "Fishman" then
+        local t = map:FindFirstChild("FishmanTrial")
+        if t and (t:GetPivot().Position - hrp.Position).Magnitude < 1000 then
+            local origin = workspace:FindFirstChild("_WorldOrigin")
+            local locations = origin and origin:FindFirstChild("Locations")
+            local water = locations and locations:FindFirstChild("Trial of Water")
+            local beasts = workspace:FindFirstChild("SeaBeasts")
+            if water and beasts then
+                for _, b in ipairs(beasts:GetChildren()) do
+                    local part = b:FindFirstChild("HumanoidRootPart")
+                    local hp = b:FindFirstChild("Health")
+                    if b.Name:find("SeaBeast") and part and hp and hp.Value > 0
+                        and (part.Position - water.Position).Magnitude <= 1500 then
+                        target = part.CFrame * CFrame.new(0, 150, 5)
+                        Trial.hitBeast(part)
+                        break
+                    end
+                end
+            end
+        end
+    end
+end
+
+function Trial.run()
+    attackFocus = nil
+
+    local role = Trial.role()
+    if not role then
+        target = nil
+        Trial.state = "esta conta nao e a vencedora nem secundaria"
+        return
+    end
+
+    local race = Ghoul.race()
+    if not (race and K.TRIAL_RACES[race]) then
+        target = nil
+        Trial.state = "raca sem trial automatica (" .. tostring(race) .. ")"
+        return
+    end
+
+    -- dentro da trial
+    if raidGui() then
+        Trial.waitSince = nil
+        if role == "secondary" then
+            Trial.state = "Secundaria: resetando"
+            if not Trial.resetDone then
+                Trial.resetDone = true
+                Trial.secUntil = os.clock() + 120
+                task.wait(2)
+                local char = Player.Character
+                local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+                if humanoid then humanoid.Health = 0 end
+            end
+        else
+            Trial.inside(race)
+        end
+        return
+    end
+
+    -- fora da trial
+    if role == "secondary" and os.clock() < Trial.secUntil then
+        target = nil
+        Trial.state = "Secundaria: aguardando"
+        return
+    end
+    Trial.resetDone = false
+
+    if not Trial.hasGear() then
+        target = nil
+        Trial.state = "sem engrenagem (progresso " .. tostring(Trial.prog) .. ")"
+        return
+    end
+
+    if not Trial.inTemple() then return end
+
+    if Trial.cfg.Multi then
+        if role == "winner" then
+            local ready, who = Trial.secondariesNear()
+            if not ready then
+                Trial.waitSince = Trial.waitSince or os.clock()
+                if os.clock() - Trial.waitSince < 45 then
+                    target = nil
+                    Trial.state = "esperando " .. tostring(who) .. " no templo"
+                    return
+                end
+            end
+        elseif not Trial.winnerNear() then
+            target = nil
+            Trial.state = "Secundaria: esperando o vencedor no templo"
+            return
+        end
+    end
+
+    -- o vencedor puxa a alavanca antes de ir para a porta
+    if role == "winner" and not Trial.leverDone then
+        Trial.state = "puxando a alavanca"
+        if os.clock() - Trial.streamAt > 5 then
+            Trial.streamAt = os.clock()
+            Trial.stream(K.TEMPLE_LEVER.Position)
+        end
+        if Trial.distTo(K.TEMPLE_LEVER.Position) > 10 then
+            flyTo(K.TEMPLE_LEVER, 6, 60, Trial.abort)
+            return
+        end
+        local okL, prompt = pcall(function()
+            return workspace.Map["Temple of Time"].Lever.Prompt.ProximityPrompt
+        end)
+        if okL and prompt then
+            pcall(fireproximityprompt, prompt, math.huge)
+            task.wait(1)
+            Trial.leverDone = true
+        else
+            Trial.loadTemple()
+            Trial.stream(K.TEMPLE_LEVER.Position)
+            task.wait(1)
+        end
+        return
+    end
+
+    Trial.state = "indo para a porta da trial"
+    local door = K.TRIAL_DOORS[race]
+    if os.clock() - Trial.streamAt > 5 then
+        Trial.streamAt = os.clock()
+        Trial.stream(door.Position)
+    end
+    flyTo(door, 5, 60, Trial.abort)
+end
+
 local function step()
     if traveling then return end
+
+    if Trial.aimSet then
+        Aim.pos, Aim.part = nil, nil
+        Trial.aimSet = false
+    end
 
     Dough.update()
     Ghoul.update()
@@ -2657,8 +3052,8 @@ local function step()
         or Dough.phase == "kill" and "Katakuri"
         or Options.MethodFarm.Value
     local method = K.METHODS[methodName]
-    local questMob = pickMob(method)
-    local names = method.cake and K.CAKE_MOBS or allNames(method, questMob)
+    local questMob = K.pickMob(method)
+    local names = method.cake and K.CAKE_MOBS or K.allNames(method, questMob)
     questMobName = questMob.name
 
     local function prep()
@@ -2681,7 +3076,16 @@ local function step()
         prep()
         lastMode = "multiraid"
         Stats.State = "Multi Raid"
-        runMultiRaid()
+        K.runMultiRaid()
+        return
+    end
+
+    if Trial.active() then
+        prep()
+        lastMode = "trial"
+        Stats.State = "Trial"
+        Trial.run()
+        Stats.State = "Trial: " .. Trial.state
         return
     end
 
@@ -2737,21 +3141,21 @@ local function step()
     end
 
     if Options.SummonSoulReaper.Value and not findEnemy(K.SOUL_BOSS, true) then
-        local essence = findEssence()
+        local essence = K.findEssence()
         if essence then
             hover(true)
             lastMode = "summon"
             Stats.State = "Summon Soul Reaper"
-            handleSummon(essence)
+            K.handleSummon(essence)
             return
         end
     end
 
-    if Options.CastleRaid.Value and raidActive() then
+    if Options.CastleRaid.Value and K.raidActive() then
         prep()
         lastMode = "raid"
         Stats.State = "Pirate Raid"
-        handleRaid()
+        K.handleRaid()
         return
     end
 
@@ -2802,12 +3206,12 @@ local function step()
     end
 
     if Options.CollectFruits.Value then
-        local fruit = nearestFruit()
+        local fruit = K.nearestFruit()
         if fruit then
             hover(true)
             lastMode = "fruit"
             Stats.State = "Collecting Fruit"
-            handleFruit(fruit)
+            K.handleFruit(fruit)
             return
         end
     end
@@ -2819,7 +3223,7 @@ local function step()
             prep()
             lastMode = "elite"
             Stats.State = "Elite Hunter"
-            handleElite(eBoss, inWorld)
+            K.handleElite(eBoss, inWorld)
             return
         end
     end
@@ -2915,19 +3319,19 @@ local function step()
 
     if Options.GetQuest.Value and not method.noQuest then
         local id = questMob.quest .. questMob.idx
-        if questId ~= id or questDone() then
+        if questId ~= id or K.questDone() then
             clearGroup()
             attackFocus = nil
             if questVisible() then commF("AbandonQuest") end
             flyTo((questMob.giver or method.giver) + Vector3.new(0, 3, 0), 8)
             if not farming then return end
             commF("StartQuest", questMob.quest, questMob.idx)
-            questId, kills, needed, questSeen, hiddenSince = id, 0, questNeeded(questMob), false, nil
+            questId, kills, needed, questSeen, hiddenSince = id, 0, K.questNeeded(questMob), false, nil
             task.wait(0.5)
         end
     end
 
-    watchdog()
+    K.watchdog()
 
     local lead = BringGroup[1]
     if BringPoint and lead and alive(lead) then
@@ -2987,7 +3391,7 @@ local function farmLoop()
     lastMode = "farm"
 end
 
-local function startTraveling()
+function K.startTraveling()
     local dest = K.ISLANDS[Options.TravelIsland.Value]
     if not dest then return end
 
@@ -3206,7 +3610,7 @@ Travel:AddDropdown("TravelIsland", {
 
 Travel:AddButton({
     Title = "Start Traveling",
-    Callback = startTraveling,
+    Callback = K.startTraveling,
 })
 
 Travel:AddButton({
@@ -3312,7 +3716,7 @@ local function refresh()
         or (Options.AutoGhoul and Options.AutoGhoul.Value)
         or (Options.KillBossSelected and Options.KillBossSelected.Value)
         or (Options.FarmBossSelected and Options.FarmBossSelected.Value)
-        or multiRaidActive() or RaidCfg.AutoBuyChip
+        or multiRaidActive() or RaidCfg.AutoBuyChip or Trial.active()
     if want and not farming then
         farming = true
         task.spawn(farmLoop)
@@ -3466,6 +3870,88 @@ end)
 end
 
 if not InSea2 then
+    local raceLabel = K.TrialTab:AddParagraph({ Title = "Race:", Content = "-" })
+    local gearLabel = K.TrialTab:AddParagraph({ Title = "Pull Lever(Mirage)?", Content = "-" })
+
+    K.TrialTab:AddToggle("AutoTrial", { Title = "Auto Trial", Default = false }):OnChanged(function(value)
+        Trial.cfg.Auto = value
+        refresh()
+    end)
+
+    local MultiTrialSection = K.TrialTab:AddSection("Multi Trial")
+
+    local function trialPlayerNames()
+        local list = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= Player then table.insert(list, p.Name) end
+        end
+        table.sort(list)
+        table.insert(list, 1, Player.Name)
+        return list
+    end
+
+    local WinnerDropdown = MultiTrialSection:AddDropdown("TrialWinner", {
+        Title = "Player Que Vai Ganhar",
+        Values = trialPlayerNames(),
+        Multi = false,
+        Default = 1,
+    })
+    WinnerDropdown:OnChanged(function(value)
+        if type(value) == "string" then Trial.cfg.Winner = value end
+    end)
+
+    local SecondaryDropdown = MultiTrialSection:AddDropdown("TrialSecondaries", {
+        Title = "Contas Secundarias",
+        Values = trialPlayerNames(),
+        Multi = true,
+        Default = {},
+    })
+    SecondaryDropdown:OnChanged(function(value)
+        local list = {}
+        if type(value) == "table" then
+            for name, on in pairs(value) do
+                if on then table.insert(list, name) end
+            end
+        end
+        table.sort(list)
+        Trial.cfg.Secondaries = list
+    end)
+
+    MultiTrialSection:AddButton({
+        Title = "Atualizar Lista",
+        Callback = function()
+            local names = trialPlayerNames()
+            pcall(function() WinnerDropdown:SetValues(names) end)
+            pcall(function() WinnerDropdown:SetValue(table.find(names, Trial.cfg.Winner) and Trial.cfg.Winner or Player.Name) end)
+            pcall(function() SecondaryDropdown:SetValues(names) end)
+            local keep = {}
+            for _, n in ipairs(Trial.cfg.Secondaries) do
+                if table.find(names, n) then keep[n] = true end
+            end
+            pcall(function() SecondaryDropdown:SetValue(keep) end)
+            notify("Trial", #names .. " jogador(es) na lista", 3)
+        end,
+    })
+
+    MultiTrialSection:AddToggle("MultiTrial", { Title = "Multi Trial", Default = false }):OnChanged(function(value)
+        Trial.cfg.Multi = value
+        refresh()
+    end)
+
+    task.spawn(function()
+        local function setText(label, text)
+            pcall(function() label:SetDesc(text) end)
+        end
+        while true do
+            task.wait(1)
+            setText(raceLabel, tostring(Ghoul.race() or "-"))
+            Trial.refresh()
+            setText(gearLabel, Trial.hasGear() and "Yes" or "No")
+        end
+    end)
+end
+
+if not InSea2 then
 K.HopTab:AddDropdown("HopMethod", {
     Title = "Method Farm",
     Values = { "Rip Indra", "Dough King", "Tyrant Of The Skies", "Katakuri" },
@@ -3535,7 +4021,7 @@ end)
 do
     local HttpService = game:GetService("HttpService")
     local SAVE_FILE = "BatmanHub_Settings.json"
-    local SKIP = { RaidPlayers = true } -- lista de jogadores muda a cada servidor
+    local SKIP = { RaidPlayers = true, TrialSecondaries = true, TrialWinner = true } -- lista de jogadores muda a cada servidor
 
     local function copyValue(v)
         if type(v) ~= "table" then return v end
