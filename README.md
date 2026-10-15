@@ -2505,7 +2505,7 @@ function Ghoul.fetchServers(bossKey)
 end
 
 -- entra num dos servers da lista (pula os ja tentados) ate o teleporte acontecer ou cancelled() mandar parar
-function Ghoul.joinList(jobs, tried, cancelled, label)
+function Ghoul.joinList(jobs, tried, cancelled, label, perServerWait)
     local fresh = {}
     for _, jobId in ipairs(jobs) do
         if not tried[jobId] then table.insert(fresh, jobId) end
@@ -2524,7 +2524,9 @@ function Ghoul.joinList(jobs, tried, cancelled, label)
     for i, jobId in ipairs(fresh) do
         if cancelled() or game.JobId ~= currentJob then break end
         tried[jobId] = true
-        notify("Server Hop", label .. ": tentando server " .. i .. "/" .. #fresh, 3)
+        if not perServerWait or i == 1 then
+            notify("Server Hop", label .. ": tentando server " .. i .. "/" .. #fresh, 3)
+        end
 
         local failed = false
         local conn = TeleportService.TeleportInitFailed:Connect(function() failed = true end)
@@ -2537,15 +2539,16 @@ function Ghoul.joinList(jobs, tried, cancelled, label)
             end
         end)
 
-        -- espera ate 6s o teleporte acontecer
+        -- espera o teleporte acontecer (padrao 6s; no Hop Server e 0.5s)
         local t0 = os.clock()
-        while os.clock() - t0 < 6 and game.JobId == currentJob and not cancelled() do
-            task.wait(0.2)
+        local maxWait = perServerWait or 6
+        while os.clock() - t0 < maxWait and game.JobId == currentJob and not cancelled() do
+            task.wait(math.min(0.2, maxWait))
         end
         conn:Disconnect()
 
         if game.JobId ~= currentJob then break end
-        if failed then task.wait(0.8) end
+        if failed then task.wait(math.min(0.8, maxWait)) end
     end
 end
 
@@ -2589,16 +2592,18 @@ do
             ["Dough King"] = "doughking",
             ["Tyrant Of The Skies"] = "tyrant",
             ["Katakuri"] = "cakeprince",
+            ["Soul Reaper"] = "soulreaper",
         },
         NAMES = {
             ["Rip Indra"] = K.RIP_BOSS,
             ["Dough King"] = K.DOUGH_BOSS,
             ["Tyrant Of The Skies"] = K.METHODS["Tyrant Of The Skies"].bosses,
             ["Katakuri"] = K.BOSS_NAMES,
+            ["Soul Reaper"] = K.SOUL_BOSS,
         },
         FILE = "BatmanHub_Hop.json",
         GRACE = 10,
-        COOLDOWN = 15,
+        COOLDOWN = 0.5,
         hopping = false,
         lastHop = -100,
         lastWarn = -100,
@@ -2613,7 +2618,7 @@ do
     pcall(function()
         if isfile and readfile and isfile(Hop.FILE) then
             local data = game:GetService("HttpService"):JSONDecode(readfile(Hop.FILE))
-            if type(data) == "table" and data.active then Hop.resume = data end
+            if type(data) == "table" and (data.active or data.kill) then Hop.resume = data end
         end
     end)
 
@@ -2622,12 +2627,19 @@ do
         return names ~= nil and (findEnemy(names, true) ~= nil or findUnloaded(names) ~= nil)
     end
 
-    -- guarda que o Hop Farm estava ligado, para continuar no proximo server
+    -- guarda o Hop Farm, o Kill Boss Selected e o boss escolhido para continuar no proximo server
     function Hop.save()
         pcall(function()
             if not writefile then return end
+            local farm = Options.HopFarm and Options.HopFarm.Value == true
+            local kill = Options.KillBossSelected and Options.KillBossSelected.Value == true
+            if not (farm or kill) then
+                if isfile and delfile and isfile(Hop.FILE) then delfile(Hop.FILE) end
+                return
+            end
             writefile(Hop.FILE, game:GetService("HttpService"):JSONEncode({
-                active = true,
+                active = farm,
+                kill = kill,
                 method = Options.HopMethod.Value,
             }))
         end)
@@ -2662,7 +2674,7 @@ do
                     notify("Hop Server", "API: " .. tostring(err), 6)
                 end
             else
-                Ghoul.joinList(jobs, Hop.tried, cancelled, method)
+                Ghoul.joinList(jobs, Hop.tried, cancelled, method, 0.5)
             end
             Hop.hopping = false
         end)
@@ -2671,7 +2683,7 @@ do
     -- Hop Farm: espera o server carregar e so troca quando o boss escolhido nao existe mais (morto)
     task.spawn(function()
         while true do
-            task.wait(1)
+            task.wait(0.5)
             if not InSea2 and Options.HopFarm and Options.HopFarm.Value and not Hop.hopping then
                 if not Hop.bossAlive() and os.clock() - Hop.joinedAt > Hop.GRACE then
                     Hop.join(true)
@@ -3954,11 +3966,11 @@ end
 if not InSea2 then
 K.HopTab:AddDropdown("HopMethod", {
     Title = "Method Farm",
-    Values = { "Rip Indra", "Dough King", "Tyrant Of The Skies", "Katakuri" },
+    Values = { "Rip Indra", "Dough King", "Tyrant Of The Skies", "Katakuri", "Soul Reaper" },
     Multi = false,
     Default = 1,
 }):OnChanged(function()
-    if Options.HopFarm and Options.HopFarm.Value then K.Hop.save() end
+    K.Hop.save()
 end)
 
 K.HopTab:AddButton({
@@ -3972,20 +3984,15 @@ K.HopTab:AddToggle("KillBossSelected", {
     Title = "Kill Boss Selected",
     Default = false,
 }):OnChanged(function()
+    K.Hop.save()
     refresh()
 end)
 
 K.HopTab:AddToggle("HopFarm", {
     Title = "Hop Farm",
     Default = false,
-}):OnChanged(function(value)
-    if value then
-        K.Hop.save()
-    else
-        pcall(function()
-            if isfile and delfile and isfile(K.Hop.FILE) then delfile(K.Hop.FILE) end
-        end)
-    end
+}):OnChanged(function()
+    K.Hop.save()
 end)
 end
 
@@ -4119,7 +4126,8 @@ if not InSea2 and K.Hop and K.Hop.resume and Options.HopFarm then
     pcall(function()
         local method = K.Hop.resume.method
         if method and K.Hop.KEYS[method] then Options.HopMethod:SetValue(method) end
-        Options.HopFarm:SetValue(true)
+        Options.HopFarm:SetValue(K.Hop.resume.active == true)
+        Options.KillBossSelected:SetValue(K.Hop.resume.kill == true)
     end)
 end
 
