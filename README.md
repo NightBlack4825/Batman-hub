@@ -200,6 +200,7 @@ K.CASTLE_POS = Vector3.new(-5496, 313, -2841)
 K.CASTLE_RADIUS = 700
 K.RAID_WAIT = 240
 K.RAID_END_IDLE = 2
+K.RAID_START_DELAY = 1
 
 local farming = false
 local traveling = false
@@ -281,6 +282,17 @@ end)
 local function root()
     local char = Player.Character
     return char and char:FindFirstChild("HumanoidRootPart")
+end
+
+-- velocidade de voo: Fast Tween (Beta) voa a 300; senao usa o slider Fly Speed
+function K.flySpeed()
+    if Options.FastTween and Options.FastTween.Value then return 300 end
+    return Options.FlySpeed.Value
+end
+
+function K.distTo(pos)
+    local hrp = root()
+    return hrp and (hrp.Position - pos).Magnitude or math.huge
 end
 
 local function commF(...)
@@ -757,6 +769,10 @@ local function onText(text)
         raidUntil = os.clock() + K.RAID_WAIT
         raidLastSeen = os.clock()
         raidSawEnemies = false
+        if Options.CastleRaid and Options.CastleRaid.Value and os.clock() - (K.lastRaidAlert or -100) > 30 then
+            K.lastRaidAlert = os.clock()
+            Fluent:Notify({ Title = "Castle Raid", Content = "Raid pirata detectada, indo ao Castelo do Mar", Duration = 5 })
+        end
     end
 end
 
@@ -765,6 +781,7 @@ pcall(function()
         if d:IsA("TextLabel") then
             onText(d.Text)
             task.delay(0.3, function() onText(d.Text) end)
+            d:GetPropertyChangedSignal("Text"):Connect(function() onText(d.Text) end)
         end
     end)
 end)
@@ -1552,7 +1569,7 @@ local function goToSpot(cf)
     local dist = (hrp.Position - cf.Position).Magnitude
     if dist > 4 then
         if dist > 12 then
-            flyAndWait(CFrame.new(cf.Position + Vector3.new(0, 6, 0)), dist / Options.FlySpeed.Value + 15, abortMulti)
+            flyAndWait(CFrame.new(cf.Position + Vector3.new(0, 6, 0)), dist / K.flySpeed() + 15, abortMulti)
         end
         hrp = root()
         if hrp and multiRaidActive() then
@@ -1840,13 +1857,30 @@ local function buyChip()
     Stats.PauseStore = true
     local ok, err = pcall(function()
         local npc = findNPCByName("Mysterious Scientist")
-        if npc then
-            local okp, pivot = pcall(function() return npc:GetPivot() end)
-            if okp then
-                flyAndWait(CFrame.new(pivot.Position + Vector3.new(0, 3, 0)), 60, K.abortChip)
+        if not npc then
+            -- NPC ainda nao carregou: vai para perto do castelo e espera ele aparecer
+            flyAndWait(RaidCfg.HostCFrame, 90, K.abortChip)
+            local t0 = os.clock()
+            while not npc and chipWanted() and os.clock() - t0 < 5 do
+                task.wait(0.5)
+                npc = findNPCByName("Mysterious Scientist")
             end
         end
+        if not npc then
+            raidWarn("npc do chip (Mysterious Scientist) nao encontrado")
+            return
+        end
+        local okp, pivot = pcall(function() return npc:GetPivot() end)
+        if not okp then return end
+        flyAndWait(CFrame.new(pivot.Position + Vector3.new(0, 3, 0)), 60, K.abortChip)
         if not chipWanted() then return end
+
+        -- so compra se realmente chegou no NPC
+        local hrp = root()
+        if not (hrp and (hrp.Position - pivot.Position).Magnitude <= 20) then
+            raidWarn("ainda nao chegou no npc do chip")
+            return
+        end
 
         if not K.anyFruitTool() then
             if RaidCfg.AutoUnstore or (RaidCfg.Multi and RaidCfg.Pay) then
@@ -1858,8 +1892,7 @@ local function buyChip()
                 end
                 task.wait(0.6)
             else
-                raidWarn("sem fruta na mochila para o chip (ative Auto Unstore Fruit Under 1M)")
-                return
+                Stats.RaidMsg = "sem fruta na mochila: tentando comprar o chip com dinheiro"
             end
         end
 
@@ -1869,6 +1902,19 @@ local function buyChip()
             task.wait(1)
         end
         if hasChip() then RaidPayFruit = nil end
+
+        -- nao deu com fruta: tenta comprar com dinheiro (Beli)
+        if not hasChip() and chipWanted() then
+            Stats.RaidMsg = "tentando comprar o chip com dinheiro"
+            for _, args in ipairs({
+                { "RaidsNpc", "Select", RaidCfg.Chip, "Beli" },
+                { "RaidsNpc", "Buy", RaidCfg.Chip },
+            }) do
+                if hasChip() or not chipWanted() then break end
+                pcall(function() CommF:InvokeServer(table.unpack(args)) end)
+                task.wait(1)
+            end
+        end
     end)
     Stats.PauseStore = false
     if not ok then Stats.RaidMsg = "erro: " .. short(err) end
@@ -1888,12 +1934,13 @@ local function pressRaidButton()
     target = nil
     attackFocus = nil
     clearGroup()
-    for _ = 1, 2 do
+    for attempt = 1, 2 do
         if raidGui() or farFromLobby() then return true end
         local hadChip = hasChip()
         pcall(fireclickdetector, det)
         local t0 = os.clock()
-        while os.clock() - t0 < 30 and multiRaidActive() do
+        local window = attempt == 1 and 6 or 30
+        while os.clock() - t0 < window and multiRaidActive() do
             task.wait(0.3)
             if raidGui() or farFromLobby() then return true end
             if hadChip and not hasChip() then
@@ -1901,6 +1948,8 @@ local function pressRaidButton()
                 return true
             end
         end
+        -- a 1a tentativa nao funcionou: espera 3 segundos e tenta de novo
+        if attempt == 1 and multiRaidActive() then task.wait(3) end
     end
     return false
 end
@@ -1943,7 +1992,8 @@ function K.runRaidPay()
         task.wait(0.5)
     end
     if not multiRaidActive() then return end
-    task.wait(1)
+    if K.distTo(RaidCfg.HostCFrame.Position) > 15 then task.wait(0.5) return end
+    task.wait(K.RAID_START_DELAY)
     if pressRaidButton() then
         raidFight(25)
     else
@@ -1987,8 +2037,9 @@ function K.runAutoRaid()
         return
     end
     if not goToSpot(RaidCfg.HostCFrame) then task.wait(1) return end
+    if K.distTo(RaidCfg.HostCFrame.Position) > 15 then task.wait(0.5) return end
     RaidArmed = true
-    task.wait(1)
+    task.wait(K.RAID_START_DELAY)
     if pressRaidButton() then
         raidFight(25)
     else
@@ -2009,7 +2060,7 @@ RunService.Heartbeat:Connect(function(dt)
     local hrp = root()
     if not ((farming or traveling) and target and hrp) then return end
     local delta = target.Position - hrp.Position
-    local distance = Options.FlySpeed.Value * dt
+    local distance = K.flySpeed() * dt
     if delta.Magnitude <= distance then
         hrp.CFrame = target
     else
@@ -2645,7 +2696,7 @@ do
         end)
     end
 
-    function Hop.join(auto)
+    function Hop.join(auto, special)
         if Hop.hopping then
             if not auto then notify("Hop Server", "Ja esta trocando de server", 3) end
             return
@@ -2654,8 +2705,8 @@ do
         Hop.hopping = true
         Hop.lastHop = os.clock()
 
-        local method = Options.HopMethod.Value
-        local key = Hop.KEYS[method]
+        local method = special or Options.HopMethod.Value
+        local key = special and "fullmoon" or Hop.KEYS[method]
         if Hop.triedMethod ~= method then
             table.clear(Hop.tried)
             Hop.triedMethod = method
@@ -2691,6 +2742,40 @@ do
             end
         end
     end)
+end
+
+-- Moon: textura da lua e fase do servidor
+function K.moonTexture()
+    local sky = Lighting:FindFirstChild("FantasySky")
+        or Lighting:FindFirstChild("Sky")
+        or Lighting:FindFirstChildWhichIsA("Sky")
+    return sky and sky.MoonTextureId or ""
+end
+
+function K.moonText()
+    local phase = Lighting:GetAttribute("MoonPhase")
+    local texture = tostring(K.moonTexture())
+    local clock = Lighting.ClockTime
+    local night = clock >= 18 or clock <= 5.5
+
+    if Lighting:GetAttribute("IsBlueMoon") == true then
+        return "Blue Moon (Active)"
+    end
+    if phase == 5 or texture:find("9709149431") then
+        return night and "Full Moon (Active)" or "Full Moon (Tonight)"
+    end
+    if phase == 4 then
+        return "Phase 4 (Next Night Full Moon)"
+    end
+    if phase then
+        return string.format("Phase %d (%d nights left)", phase, (5 - phase) % 8)
+    end
+    return "Phase 1"
+end
+
+function K.isFullMoon()
+    local ok, text = pcall(K.moonText)
+    return ok and text == "Full Moon (Active)"
 end
 
 -- Trial (Race V4): auto trial / multi trial / puxar alavanca
@@ -3040,6 +3125,13 @@ function Trial.run()
         return
     end
 
+    -- no Multi Trial so inicia a trial com lua cheia (noite)
+    if Trial.cfg.Multi and not K.isFullMoon() then
+        target = nil
+        Trial.state = "esperando a lua cheia"
+        return
+    end
+
     Trial.state = "indo para a porta da trial"
     local door = K.TRIAL_DOORS[race]
     if os.clock() - Trial.streamAt > 5 then
@@ -3098,6 +3190,14 @@ local function step()
         Stats.State = "Trial"
         Trial.run()
         Stats.State = "Trial: " .. Trial.state
+        return
+    end
+
+    if Options.CastleRaid.Value and K.raidActive() then
+        prep()
+        lastMode = "raid"
+        Stats.State = "Pirate Raid"
+        K.handleRaid()
         return
     end
 
@@ -3161,14 +3261,6 @@ local function step()
             K.handleSummon(essence)
             return
         end
-    end
-
-    if Options.CastleRaid.Value and K.raidActive() then
-        prep()
-        lastMode = "raid"
-        Stats.State = "Pirate Raid"
-        K.handleRaid()
-        return
     end
 
     if Options.AutoFactory and Options.AutoFactory.Value then
@@ -3528,6 +3620,7 @@ if not InSea2 then
     local stateLabel = StatusTab:AddParagraph({ Title = "State:", Content = "Idle" })
     local katakuriLabel = StatusTab:AddParagraph({ Title = "Katakuri:", Content = "-" })
     local tyrantLabel = StatusTab:AddParagraph({ Title = "Tyrant Of The Skies:", Content = "0/4" })
+    local moonLabel = StatusTab:AddParagraph({ Title = "Moon:", Content = "-" })
 
     local function setText(label, text)
         pcall(function() label:SetDesc(text) end)
@@ -3549,6 +3642,9 @@ if not InSea2 then
                 return Tyrant.eyes() .. "/4"
             end)
             setText(tyrantLabel, okT and tyrText or "0/4")
+
+            local okM, moonText = pcall(K.moonText)
+            setText(moonLabel, okM and moonText or "-")
         end
     end)
 end
@@ -3673,6 +3769,8 @@ Settings:AddSlider("FlySpeed", {
     Max = 350,
     Rounding = 0,
 })
+
+Settings:AddToggle("FastTween", { Title = "Fast Tween (Beta)", Default = false })
 
 Settings:AddToggle("AutoClick", { Title = "Auto Click", Default = false })
 
@@ -3973,13 +4071,6 @@ K.HopTab:AddDropdown("HopMethod", {
     K.Hop.save()
 end)
 
-K.HopTab:AddButton({
-    Title = "Hop Boss Server Selected",
-    Callback = function()
-        K.Hop.join(false)
-    end,
-})
-
 K.HopTab:AddToggle("KillBossSelected", {
     Title = "Kill Boss Selected",
     Default = false,
@@ -3994,6 +4085,20 @@ K.HopTab:AddToggle("HopFarm", {
 }):OnChanged(function()
     K.Hop.save()
 end)
+
+K.HopTab:AddButton({
+    Title = "Hop Boss Server Selected",
+    Callback = function()
+        K.Hop.join(false)
+    end,
+})
+
+K.HopTab:AddButton({
+    Title = "Hop Server Have Full Moon",
+    Callback = function()
+        K.Hop.join(false, "Full Moon")
+    end,
+})
 end
 
 Player.Idled:Connect(function()
