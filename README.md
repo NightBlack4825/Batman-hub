@@ -3401,6 +3401,15 @@ local function step()
         return
     end
 
+    if Options.AutoPullLever and Options.AutoPullLever.Value and not Trial.hasGear() then
+        hover(true)
+        lastMode = "mirage"
+        Stats.State = "Mirage Island"
+        K.Mirage.run()
+        Stats.State = "Mirage: " .. K.Mirage.state
+        return
+    end
+
     if Trial.active() then
         prep()
         lastMode = "trial"
@@ -3691,6 +3700,202 @@ local function step()
 end
 
 local lastStepErr = -100
+--=====================================================================
+-- MIRAGE ISLAND: auto pull lever
+-- topo da ilha -> noite -> olha pra lua -> V3 -> pega a engrenagem azul
+--=====================================================================
+K.Mirage = { state = "-", lastV3 = 0, lastTry = -100 }
+
+function K.Mirage.island()
+    local map = workspace:FindFirstChild("Map")
+    return map and map:FindFirstChild("MysticIsland")
+end
+
+function K.Mirage.spawned()
+    return K.Mirage.island() ~= nil
+end
+
+-- pedestal azul (engrenagem)
+function K.Mirage.blueGear()
+    local island = K.Mirage.island()
+    if not island then return nil end
+    for _, obj in pairs(island:GetChildren()) do
+        if obj:IsA("MeshPart") and obj.MeshId == "rbxassetid://10153114969" then
+            return obj
+        end
+    end
+end
+
+-- ponto mais alto da ilha
+function K.Mirage.highestPoint()
+    local island = K.Mirage.island()
+    if not island then return nil end
+    for _, obj in pairs(island:GetChildren()) do
+        if obj:IsA("MeshPart") and obj.MeshId == "rbxassetid://6745037796" then
+            return obj
+        end
+    end
+end
+
+-- 211.88 studs acima do mesh = topo fisico da Mirage
+function K.Mirage.topCFrame()
+    local topo = K.Mirage.highestPoint()
+    if not topo then return nil end
+    return topo.CFrame * CFrame.new(0, 211.88, 0)
+end
+
+function K.Mirage.isNight()
+    local clock = Lighting.ClockTime
+    return clock >= 18 or clock <= 5.5
+end
+
+function K.Mirage.abort()
+    return not (Options.AutoPullLever and Options.AutoPullLever.Value)
+end
+
+function K.Mirage.run()
+    attackFocus = nil
+
+    if Trial.hasGear() then
+        target = nil
+        K.Mirage.state = "ja tem a engrenagem"
+        return
+    end
+
+    if not K.Mirage.spawned() then
+        target = nil
+        K.Mirage.state = "aguardando a Mirage Island"
+        return
+    end
+
+    local cframeTopo = K.Mirage.topCFrame()
+    if not cframeTopo then
+        target = nil
+        K.Mirage.state = "carregando a ilha..."
+        return
+    end
+
+    local hrp = root()
+    if not hrp then return end
+
+    -- longe do topo: voa ate la
+    if (cframeTopo.Position - hrp.Position).Magnitude > 10 then
+        K.Mirage.state = "indo pro topo"
+        flyTo(cframeTopo, 10, 90, K.Mirage.abort)
+        return
+    end
+
+    -- no topo: segura a posicao e espera a noite
+    target = cframeTopo
+    if not K.Mirage.isNight() then
+        K.Mirage.state = "esperando a noite"
+        return
+    end
+
+    if os.clock() - K.Mirage.lastTry < 4 then
+        K.Mirage.state = "aguardando"
+        return
+    end
+    K.Mirage.lastTry = os.clock()
+    K.Mirage.state = "olhando a lua + V3 + engrenagem"
+
+    -- olha pra lua enquanto ativa o V3 e pega a engrenagem
+    local camera = workspace.CurrentCamera
+    RunService:BindToRenderStep("BatmanMoonLook", Enum.RenderPriority.Camera.Value + 1, function()
+        local pos = camera.CFrame.Position
+        camera.CFrame = CFrame.lookAt(pos, pos + Lighting:GetMoonDirection())
+    end)
+
+    pcall(function()
+        task.wait(0.3)
+
+        -- raca V3
+        if os.clock() - K.Mirage.lastV3 > 3 then
+            K.Mirage.lastV3 = os.clock()
+            local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+            local commE = remotes and remotes:FindFirstChild("CommE")
+            if commE then commE:FireServer("ActivateAbility") end
+        end
+        task.wait(0.7)
+
+        -- engrenagem azul
+        local gear = K.Mirage.blueGear()
+        if gear then
+            flyTo(CFrame.new(gear.Position + Vector3.new(0, 3, 0)), 8, 20, K.Mirage.abort)
+            local myRoot = root()
+            if myRoot and firetouchinterest then
+                pcall(firetouchinterest, myRoot, gear, 0)
+                task.wait(0.1)
+                pcall(firetouchinterest, myRoot, gear, 1)
+            end
+            if fireproximityprompt then
+                for _, d in ipairs(gear:GetDescendants()) do
+                    if d:IsA("ProximityPrompt") then pcall(fireproximityprompt, d) end
+                end
+            end
+            task.wait(0.5)
+        end
+    end)
+
+    RunService:UnbindFromRenderStep("BatmanMoonLook")
+end
+
+-- Hop Server To Have Mirage Island: usa a mesma API do Hop Server.
+-- Se a Mirage ja estiver spawnada no server, fica; so troca quando nao tem (ou quando ela despawnar).
+K.MirageHop = {
+    KEYS = { "mirage", "mirageisland" },
+    GRACE = 15,
+    COOLDOWN = 3,
+    hopping = false,
+    lastHop = -100,
+    lastWarn = -100,
+    joinedAt = os.clock(),
+    tried = {},
+}
+
+function K.MirageHop.join()
+    local H = K.MirageHop
+    if H.hopping or (K.Hop and K.Hop.hopping) then return end
+    H.hopping = true
+    H.lastHop = os.clock()
+
+    task.spawn(function()
+        local function cancelled()
+            return not (Options.HopMirage and Options.HopMirage.Value) or K.Mirage.spawned()
+        end
+
+        local jobs, err
+        for _, key in ipairs(H.KEYS) do
+            jobs, err = Ghoul.fetchServers(key)
+            if jobs then break end
+        end
+
+        if not jobs then
+            if os.clock() - H.lastWarn > 30 then
+                H.lastWarn = os.clock()
+                warn("[Batman Hub] Hop Mirage: API: " .. tostring(err))
+            end
+        else
+            Ghoul.joinList(jobs, H.tried, cancelled, "Mirage Island", 0.5)
+        end
+        H.hopping = false
+    end)
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        local H = K.MirageHop
+        if not InSea2 and Options.HopMirage and Options.HopMirage.Value and not H.hopping
+            and not (K.Hop and K.Hop.hopping) then
+            if not K.Mirage.spawned() and os.clock() - H.joinedAt > H.GRACE
+                and os.clock() - H.lastHop > H.COOLDOWN then
+                H.join()
+            end
+        end
+    end
+end)
+
 local function farmLoop()
     while farming do
         local ok, err = pcall(step)
@@ -4041,6 +4246,7 @@ local function refresh()
         or (Options.KillBossSelected and Options.KillBossSelected.Value)
         or (Options.FarmBossSelected and Options.FarmBossSelected.Value)
         or multiRaidActive() or RaidCfg.AutoBuyChip or Trial.active()
+        or (Options.AutoPullLever and Options.AutoPullLever.Value)
     if want and not farming then
         farming = true
         task.spawn(farmLoop)
@@ -4201,6 +4407,12 @@ if not InSea2 then
         Trial.cfg.Auto = value
         refresh()
     end)
+
+    local MirageSection = K.TrialTab:AddSection("Mirage Island")
+    MirageSection:AddToggle("AutoPullLever", { Title = "Auto Pull Lever", Default = false }):OnChanged(function()
+        refresh()
+    end)
+    MirageSection:AddToggle("HopMirage", { Title = "Hop Server To Have Mirage Island", Default = false })
 
     task.spawn(function()
         local function setText(label, text)
