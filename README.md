@@ -14,18 +14,12 @@ local InSea2 = K.SEA2_IDS[game.PlaceId] == true
 -- so executa no Sea 2 e no Sea 3
 if not (InSea2 or K.SEA3_IDS[game.PlaceId]) then
     warn("[Batman Hub] Este script so funciona no Sea 2 e no Sea 3.")
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Batman Hub",
-            Text = "Funciona apenas no Sea 2 e no Sea 3.",
-            Duration = 6,
-        })
-    end)
     return
 end
 
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local Options = Fluent.Options
+Fluent.Notify = function() end
 
 local Window = Fluent:CreateWindow({
     Title = "Batman Hub",
@@ -41,7 +35,7 @@ local Main = Window:AddTab({ Title = "Main", Icon = "home" })
 local Stack = Window:AddTab({ Title = "Stack Farming", Icon = "layers" })
 local StatusTab = not InSea2 and Window:AddTab({ Title = "Status", Icon = "activity" }) or nil
 local RaidTab = not InSea2 and Window:AddTab({ Title = "Raid", Icon = "users" }) or nil
-K.TrialTab = not InSea2 and Window:AddTab({ Title = "Trial", Icon = "flag" }) or nil
+K.TrialTab = not InSea2 and Window:AddTab({ Title = "Trial(Beta)", Icon = "flag" }) or nil
 K.HopTab = not InSea2 and Window:AddTab({ Title = "Hop Server", Icon = "globe" }) or nil
 local LocalTab = Window:AddTab({ Title = "Local Player", Icon = "user" })
 local Travel = Window:AddTab({ Title = "Travel", Icon = "plane" })
@@ -518,12 +512,31 @@ local function isSelectedWeapon(tool)
     return tool:IsA("Tool") and tool.ToolTip == weapon
 end
 
+K.EQUIP_DISTANCE = 200
+
+-- so equipa a arma quando o alvo do farm (boss, elite, mob...) esta a ate 200 studs
+-- considera apenas o alvo atual, nao os npcs que estiverem perto
+local function targetWithinEquipRange(hrp)
+    if attackFocus then
+        local eRoot = attackFocus:FindFirstChild("HumanoidRootPart")
+        if eRoot and (eRoot.Position - hrp.Position).Magnitude <= K.EQUIP_DISTANCE then
+            return true
+        end
+    end
+    if typeof(target) == "CFrame" and (target.Position - hrp.Position).Magnitude <= K.EQUIP_DISTANCE then
+        return true
+    end
+    return false
+end
+
 local function equipWeapon()
     local char = Player.Character
     local humanoid = char and char:FindFirstChildOfClass("Humanoid")
     if not humanoid then return end
     local held = char:FindFirstChildOfClass("Tool")
     if held and isSelectedWeapon(held) then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp or not targetWithinEquipRange(hrp) then return end
     for _, tool in ipairs(Player.Backpack:GetChildren()) do
         if isSelectedWeapon(tool) then
             humanoid:EquipTool(tool)
@@ -636,7 +649,8 @@ local function fastAttack()
     local fruitMode = weapon == "Fruit(M1)"
 
     if not fruitMode then Aim.fruitPos, Aim.fruitPart = nil, nil end
-    equipWeapon()
+    -- so equipa a arma sozinho durante o farm; o Auto Click sozinho usa o que voce ja estiver segurando
+    if farming then equipWeapon() end
 
     local range = fruitMode and K.FRUIT_RANGE or 60
     local focusEnemy = alive(attackFocus) and attackFocus or nil
@@ -771,7 +785,7 @@ local function onText(text)
         raidSawEnemies = false
         if Options.CastleRaid and Options.CastleRaid.Value and os.clock() - (K.lastRaidAlert or -100) > 30 then
             K.lastRaidAlert = os.clock()
-            Fluent:Notify({ Title = "Castle Raid", Content = "Raid pirata detectada, indo ao Castelo do Mar", Duration = 5 })
+            do end
         end
     end
 end
@@ -814,7 +828,16 @@ function K.raidActive()
     if #castleEnemies() > 0 then
         raidSawEnemies = true
         raidLastSeen = now
+        if not castleArrived then
+            raidUntil = math.max(raidUntil, now + 60)
+        end
         return true
+    end
+    -- ainda a caminho do castelo: nunca encerra a raid por falta de NPCs
+    if not castleArrived then
+        if now < raidUntil then return true end
+        raidSawEnemies = false
+        return false
     end
     if raidSawEnemies then
         if now - raidLastSeen > K.RAID_END_IDLE then
@@ -1050,12 +1073,7 @@ function Dough.craft()
         Dough.probeAt = os.clock() + 90
         if os.clock() - Dough.lastNotify > 20 then
             Dough.lastNotify = os.clock()
-            Fluent:Notify({
-                Title = "Dough King",
-                Content = (npc and "Sweet Crafter achado" or "Sweet Crafter nao achado")
-                    .. " | cocoa: " .. Dough.cocoa .. " | resposta: " .. tostring(res):sub(1, 80),
-                Duration = 8,
-            })
+            do end
         end
     end
 end
@@ -1374,9 +1392,7 @@ function K.abortChip()
     return not chipWanted()
 end
 
-local function notify(title, content, duration)
-    Fluent:Notify({ Title = title, Content = content, Duration = duration or 4 })
-end
+local function notify() end
 
 local function short(err)
     return tostring(err):sub(1, 80)
@@ -2190,15 +2206,9 @@ function Tyrant.aimDown(pos, action)
     Aim.install()
     Aim.pos, Aim.part = aimPos, aimPart
 
-    local camera = workspace.CurrentCamera
-    RunService:BindToRenderStep("BatmanAimDown", Enum.RenderPriority.Camera.Value + 1, function()
-        local _, yaw = camera.CFrame:ToOrientation()
-        camera.CFrame = CFrame.new(camera.CFrame.Position) * CFrame.fromOrientation(-math.rad(89), yaw, 0)
-    end)
     task.wait(0.2)
     pcall(action, aimPos, aimPart)
 
-    RunService:UnbindFromRenderStep("BatmanAimDown")
     Aim.pos, Aim.part = nil, nil
 end
 
@@ -2300,29 +2310,236 @@ function Tyrant.useSkills(abort)
     end
 end
 
+--=====================================================================
+-- QUEBRA DE VASOS DO TYRANT + HOOK DE AIMPOS
+-- Skull Guitar (principal) + Skills (fallback)
+--=====================================================================
+
+getgenv().AimPos = nil
+
+-- hook __namecall: redireciona FireServer para o AimPos (instala uma vez so)
+if not getgenv().BatmanVaseHook then
+    pcall(function()
+        local MT = getrawmetatable(game)
+        local OldNameCall = MT.__namecall
+        setreadonly(MT, false)
+        MT.__namecall = newcclosure(function(self, ...)
+            local Method = getnamecallmethod()
+            local Args = { ... }
+
+            if Method == "FireServer"
+                and self.Name == "RemoteEvent"
+                and getgenv().AimPos then
+                local ok, x = pcall(function() return getgenv().AimPos.Position.X end)
+                if ok and x and not tostring(x):find("nan") then
+                    if #Args >= 1 and typeof(Args[1]) == "Vector3" then
+                        Args[1] = getgenv().AimPos.Position
+                    end
+                    if #Args >= 1 and typeof(Args[1]) == "CFrame" then
+                        Args[1] = getgenv().AimPos
+                    end
+                end
+            end
+
+            return OldNameCall(self, unpack(Args))
+        end)
+        setreadonly(MT, true)
+        getgenv().BatmanVaseHook = true
+    end)
+end
+
+-- diagnostico no console do executor (nao e notificacao na tela)
+Tyrant.lastLog = {}
+function Tyrant.log(key, msg)
+    if os.clock() - (Tyrant.lastLog[key] or -100) > 3 then
+        Tyrant.lastLog[key] = os.clock()
+        warn("[Batman Hub][Tyrant] " .. msg)
+    end
+end
+
+function Tyrant.equipTool(nome)
+    local char = Player.Character
+    if not char or not char:FindFirstChildOfClass("Humanoid") then return end
+    local tool = Player.Backpack:FindFirstChild(nome)
+    if tool and not char.Humanoid.Sit then
+        char.Humanoid:EquipTool(tool)
+    end
+end
+
+function Tyrant.nameWeapon(tipo)
+    local function buscar(container)
+        for _, item in ipairs(container:GetChildren()) do
+            if item:IsA("Tool") and item.ToolTip == tipo then
+                return item
+            end
+        end
+    end
+    return buscar(Player.Backpack) or (Player.Character and buscar(Player.Character))
+end
+
+function Tyrant.hasGuitar()
+    if Player.Character and Player.Character:FindFirstChild("Skull Guitar") then return true end
+    if Player.Backpack:FindFirstChild("Skull Guitar") then return true end
+    return false
+end
+
+-- Metodo 1: Skull Guitar
+function Tyrant.equipSkullGuitar()
+    local char = Player.Character
+    if not char then return end
+    if char:FindFirstChild("Skull Guitar") then return end
+    local gun = Player.Backpack:FindFirstChild("Skull Guitar")
+    if gun then
+        char.Humanoid:EquipTool(gun)
+    else
+        pcall(function() commF("LoadItem", "Skull Guitar") end)
+    end
+end
+
+function Tyrant.fireGuitar(vaso)
+    local char = Player.Character
+    local gun = char and char:FindFirstChild("Skull Guitar")
+    if not gun then return end
+
+    local pos = vaso.WorldPivot.Position
+    local part = vaso:FindFirstChildWhichIsA("BasePart", true)
+
+    -- mira so no mouse virtual (nao mexe na camera nem clica na tela)
+    Aim.install()
+    Aim.pos, Aim.part = pos, part
+
+    local names = {}
+    for _, d in ipairs(gun:GetDescendants()) do
+        if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
+            table.insert(names, d.ClassName .. ":" .. d.Name)
+        end
+    end
+    Tyrant.log("fire", "atirando no vaso | dist=" .. math.floor(Player:DistanceFromCharacter(pos))
+        .. " | remotes da guitarra: " .. (#names > 0 and table.concat(names, ", ") or "NENHUM")
+        .. " | ShootGunEvent: " .. tostring(Net:FindFirstChild("RE/ShootGunEvent") ~= nil))
+
+    pcall(function()
+        -- 1) remote do proprio tiro da guitarra
+        for _, r in ipairs(gun:GetDescendants()) do
+            if r:IsA("RemoteEvent") then
+                pcall(r.FireServer, r, "TAP", pos)
+            end
+        end
+
+        -- 2) ativa a tool direto (sem clique/toque na tela)
+        pcall(function() gun:Activate() end)
+
+        -- 3) remotes de tiro direto
+        local shootEvent = Net:FindFirstChild("RE/ShootGunEvent")
+        if shootEvent then
+            pcall(shootEvent.FireServer, shootEvent, pos, { part })
+        end
+        local shootFunction = gun:FindFirstChild("RemoteFunctionShoot")
+        if shootFunction then
+            task.spawn(pcall, shootFunction.InvokeServer, shootFunction, pos, part)
+        end
+    end)
+
+    task.wait(0.15)
+    Aim.pos, Aim.part = nil, nil
+end
+
+-- Metodo 2: skills (usa o hook de AimPos)
+function Tyrant.checkSkill(tool)
+    if not tool then return nil end
+    local main = Player.PlayerGui:FindFirstChild("Main")
+    local gui = main and main:FindFirstChild(tool.Name)
+    if not gui then return nil end
+    local transform = isFruit(tool) and isTransformFruit(tool)
+    for _, skill in ipairs(gui:GetChildren()) do
+        if skill:IsA("Frame") and skill.Name ~= "Template" and skill.Name ~= "Z"
+            and not (transform and skill.Name == "V") then
+            local title = skill:FindFirstChild("Title")
+            if title and title.TextColor3 == Color3.new(1, 1, 1) then
+                return skill
+            end
+        end
+    end
+    return nil
+end
+
+function Tyrant.autoAllSkill()
+    local char = Player.Character
+    if not char then return end
+    local vim = game:GetService("VirtualInputManager")
+
+    for _, tipo in ipairs({ "Melee", "Sword", "Blox Fruit", "Gun" }) do
+        local tool = Tyrant.nameWeapon(tipo)
+        if tool then
+            local skill = Tyrant.checkSkill(tool)
+            if skill then
+                Tyrant.equipTool(tool.Name)
+                if not char:FindFirstChild(tool.Name) then return end
+
+                local key = Enum.KeyCode[skill.Name] or skill.Name
+                vim:SendKeyEvent(true, key, false, game)
+                task.wait(0.5)
+                vim:SendKeyEvent(false, key, false, game)
+                return
+            end
+        end
+    end
+end
+
+-- deteccao do vaso
+function Tyrant.findVase()
+    local map = workspace:FindFirstChild("Map")
+    local tiki = map and map:FindFirstChild("TikiOutpost")
+    if not tiki then return nil end
+    local island = tiki:FindFirstChild("IslandModel", true)
+    if not island then return nil end
+    local arena = island:FindFirstChild("EagleBossArena", true)
+    if not arena then return nil end
+
+    for _, obj in ipairs(arena:GetChildren()) do
+        if obj.Name == "Tree" and not obj:GetAttribute("AlreadyDestroyedClient") then
+            return obj
+        end
+    end
+end
+
+-- chamada a cada passo do loop principal (evento ja confirmado com os 4 olhos)
 function Tyrant.run(method)
     local function abort()
         return not farming or findEnemy(method.bosses, true) ~= nil
     end
     clearGroup()
     attackFocus = nil
-    for _, pos in ipairs(Tyrant.vases) do
-        if abort() then return end
-        flyTo(CFrame.new(pos), 8, 60, abort)
-        if abort() then return end
-        if Tyrant.equipGuitar() then
-            Tyrant.shootDown(pos)
-        else
-            if os.clock() - Tyrant.lastWarn > 30 then
-                Tyrant.lastWarn = os.clock()
-                Fluent:Notify({ Title = "Batman Hub", Content = "Skull Guitar nao encontrada, usando skills", Duration = 5 })
-            end
-            Tyrant.aimDown(pos, function() Tyrant.useSkills(abort) end)
+
+    local vaso = Tyrant.findVase()
+    if not vaso then
+        getgenv().AimPos = nil
+        Tyrant.log("novaso", "nenhum vaso encontrado (ou todos ja quebrados)")
+        return
+    end
+    if abort() then return end
+
+    local pos = vaso.WorldPivot.Position
+    -- longe: voa ate o vaso
+    if Player:DistanceFromCharacter(pos) > 10 then
+        getgenv().AimPos = nil
+        flyTo(vaso.WorldPivot, 8, 60, abort)
+        return
+    end
+
+    -- perto: escolhe o metodo
+    if Tyrant.hasGuitar() then
+        getgenv().AimPos = nil
+        if not Tyrant.equipGuitar() then
+            Tyrant.log("equip", "Skull Guitar nao equipou")
+            Tyrant.equipSkullGuitar()
+            return
         end
-        local t0 = os.clock()
-        while os.clock() - t0 < 2 and not abort() do
-            task.wait(0.2)
-        end
+        -- tiro da Skull Guitar do script antigo (mira pra baixo + clique + remotes)
+        Tyrant.shootDown(pos)
+    else
+        getgenv().AimPos = vaso.WorldPivot
+        Tyrant.autoAllSkill()
     end
 end
 
@@ -3372,6 +3589,7 @@ local function step()
     if methodName == "Tyrant Of The Skies" then
         if findEnemy(method.bosses, true) then
             Tyrant.needReset = true
+            getgenv().AimPos = nil
         elseif Tyrant.eyes() < 4 then
             Tyrant.needReset = false
         elseif not Tyrant.needReset then
@@ -3549,11 +3767,7 @@ function K.startTraveling()
             traveling = false
             target = nil
             if not farming then hover(false) end
-            Fluent:Notify({
-                Title = "Batman Hub",
-                Content = "Travel: " .. tostring(Options.TravelIsland.Value) .. " concluído",
-                Duration = 3,
-            })
+            do end
         end
     end)
 end
@@ -3988,66 +4202,6 @@ if not InSea2 then
         refresh()
     end)
 
-    local MultiTrialSection = K.TrialTab:AddSection("Multi Trial")
-
-    local function trialPlayerNames()
-        local list = {}
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= Player then table.insert(list, p.Name) end
-        end
-        table.sort(list)
-        table.insert(list, 1, Player.Name)
-        return list
-    end
-
-    local WinnerDropdown = MultiTrialSection:AddDropdown("TrialWinner", {
-        Title = "Player Que Vai Ganhar",
-        Values = trialPlayerNames(),
-        Multi = false,
-        Default = 1,
-    })
-    WinnerDropdown:OnChanged(function(value)
-        if type(value) == "string" then Trial.cfg.Winner = value end
-    end)
-
-    local SecondaryDropdown = MultiTrialSection:AddDropdown("TrialSecondaries", {
-        Title = "Contas Secundarias",
-        Values = trialPlayerNames(),
-        Multi = true,
-        Default = {},
-    })
-    SecondaryDropdown:OnChanged(function(value)
-        local list = {}
-        if type(value) == "table" then
-            for name, on in pairs(value) do
-                if on then table.insert(list, name) end
-            end
-        end
-        table.sort(list)
-        Trial.cfg.Secondaries = list
-    end)
-
-    MultiTrialSection:AddButton({
-        Title = "Atualizar Lista",
-        Callback = function()
-            local names = trialPlayerNames()
-            pcall(function() WinnerDropdown:SetValues(names) end)
-            pcall(function() WinnerDropdown:SetValue(table.find(names, Trial.cfg.Winner) and Trial.cfg.Winner or Player.Name) end)
-            pcall(function() SecondaryDropdown:SetValues(names) end)
-            local keep = {}
-            for _, n in ipairs(Trial.cfg.Secondaries) do
-                if table.find(names, n) then keep[n] = true end
-            end
-            pcall(function() SecondaryDropdown:SetValue(keep) end)
-            notify("Trial", #names .. " jogador(es) na lista", 3)
-        end,
-    })
-
-    MultiTrialSection:AddToggle("MultiTrial", { Title = "Multi Trial", Default = false }):OnChanged(function(value)
-        Trial.cfg.Multi = value
-        refresh()
-    end)
-
     task.spawn(function()
         local function setText(label, text)
             pcall(function() label:SetDesc(text) end)
@@ -4219,6 +4373,31 @@ do
     })
 
     loadSettings()
+
+    -- salva sozinho sempre que alguma opcao mudar
+    local lastSaved = {}
+    local function snapshot(name)
+        local ok, enc = pcall(function()
+            return HttpService:JSONEncode({ Options[name].Value })
+        end)
+        return ok and enc or tostring(Options[name].Value)
+    end
+    for name in pairs(Defaults) do lastSaved[name] = snapshot(name) end
+
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            local changed = false
+            for name in pairs(Defaults) do
+                local now = snapshot(name)
+                if now ~= lastSaved[name] then
+                    lastSaved[name] = now
+                    changed = true
+                end
+            end
+            if changed then pcall(saveSettings) end
+        end
+    end)
 end
 
 -- depois de trocar de server, continua o Auto Ghoul se ele estava ligado
